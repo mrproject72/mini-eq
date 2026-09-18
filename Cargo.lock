@@ -939,6 +939,7 @@ dependencies = [
  "dirs",
  "ebur128",
  "env_logger",
+ "gio",
  "glib",
  "gtk4",
  "libadwaita",

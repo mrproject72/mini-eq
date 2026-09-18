@@ -1,3 +1,6 @@
+//! Mini EQ — main entry point.
+
+use adw::prelude::*;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -52,31 +55,30 @@ fn main() {
 
     env_logger::init();
 
-    println!(
-        "{} v{} starting...",
-        cli.command
-            .as_ref()
-            .map(|c| format!("{:?}", c))
-            .unwrap_or_else(|| "mini-eq".to_string()),
-        env!("CARGO_PKG_VERSION")
+    if cli.headless {
+        println!("Running headless (no GUI)");
+        if let Some(dur) = cli.duration {
+            println!("Duration: {}s", dur);
+        }
+        return;
+    }
+
+    // Launch GTK4 application
+    launch_gui();
+}
+
+fn launch_gui() {
+    let _ = adw::init();
+    let app = adw::Application::new(
+        Some("io.github.bhack.mini-eq"),
+        adw::gio::ApplicationFlags::empty(),
     );
 
-    if cli.background {
-        println!("Running in background mode");
-    }
-    if cli.auto_route {
-        println!("Auto-routing enabled");
-    }
-    if cli.headless {
-        println!("Running headless");
-    }
-    if let Some(dur) = cli.duration {
-        println!("Duration: {}s", dur);
-    }
-    if let Some(apo) = cli.import_apo {
-        println!("Importing APO preset: {:?}", apo);
-    }
-    if let Some(sink) = cli.output_sink {
-        println!("Output sink: {}", sink);
-    }
+    app.connect_activate(move |app| {
+        let window = mini_eq::window::MiniEqWindow::new(app);
+        window.present();
+    });
+
+    let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    let _ = app.run_with_args_os(&args);
 }

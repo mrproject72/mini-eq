@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::f64::consts::PI;
 
 // ── Application ──────────────────────────────────────────────────────────────
@@ -24,7 +25,7 @@ pub const EQ_MODES: [&str; 1] = ["Live PipeWire"];
 
 // ── Filter Types ─────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum FilterType {
     Off = 0,
     Bell = 1,
@@ -126,7 +127,7 @@ pub const EQ_PREAMP_MAX_DB: f64 = 6.0;
 
 // ── Biquad Coefficients ──────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct BiquadCoefficients {
     pub b0: f64,
     pub b1: f64,
@@ -160,7 +161,7 @@ impl BiquadCoefficients {
 
 // ── EQ Band ──────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EqBand {
     pub index: usize,
     pub frequency: f64,

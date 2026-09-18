@@ -259,7 +259,9 @@ cargo run --release -- --background --auto-route
 
 - GitHub Actions workflow installs `libdbus-1-dev` (required by `libdbus-sys v0.2.7`)
 - CI runs on `ubuntu-24.04` with `stable` Rust toolchain
-- Jobs: `cargo check --release`, `cargo test --lib`, `cargo clippy`, `cargo fmt --check`, `cargo build --release`
+- Jobs: `cargo check --release`, `cargo test --lib`, `cargo clippy -- -D warnings`, `cargo fmt --check`, `cargo build --release`
+- CI is currently **passing** (commit `002db80`)
+- UI directive: use native Rust UI (GTK4/Libadwaita crates), no web/interpreted layer — maximum performance
 
 > **Full project status:** see `docs/{date}-updates.md` and `docs/{date}-handover.md`.
 > This document is a static starting point, reference for onboarding not a journal or dynamic status update.
