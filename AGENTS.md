@@ -231,7 +231,7 @@ cargo run -- --headless --background --duration 30
 - **Phase 1**: ✅ Complete — Project skeleton, Cargo.toml, basic structure
 - **Phase 2**: ✅ Complete — Core module (biquad coefficients, band config, constants, 4 unit tests passing)
 - **Phase 3**: ✅ Complete — PipeWire backend (filter-chain, virtual sink, routing, stream router)
-- **Phase 4**: ⏳ Pending — UI (GTK4/Libadwaita window, band faders, presets)
+- **Phase 4**: ✅ Complete — GTK4/Libadwaita UI skeleton (window, band fader, presets, utility panes, appearance, style, instance guard)
 - **Phase 5**: ⏳ Pending — Analyzer (FFT, LUFS loudness)
 - **Phase 6**: ⏳ Pending — AutoEq/APO preset support
 - **Phase 7**: ⏳ Pending — Background mode, D-Bus control, desktop integration
@@ -244,14 +244,14 @@ cargo run -- --headless --background --duration 30
 cd /tmp/kilo && apt download libgtk-4-dev libadwaita-1-dev libgraphene-1.0-dev libpipewire-0.3-dev libspa-0.2-dev libdbus-1-dev
 for deb in *.deb; do dpkg-deb -x "$deb" ~/code/mini-eq/deps/; done
 
-# Build
+# Only env var needed: PKG_CONFIG_PATH. The linker search path for deps/*.so
+# is added automatically by build.rs (conditional on deps/ existing, so CI is
+# unaffected).
 export PKG_CONFIG_PATH="$HOME/code/mini-eq/deps/usr/lib/x86_64-linux-gnu/pkgconfig:$PKG_CONFIG_PATH"
+
+# Build / test / run
 cargo build --release
-
-# Test
 cargo test --lib
-
-# Run
 cargo run --release -- --background --auto-route
 ```
 
