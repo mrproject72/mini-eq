@@ -1,0 +1,63 @@
+[package]
+name = "mini-eq"
+version = "0.8.8"
+edition = "2024"
+description = "Compact PipeWire system-wide parametric equalizer for Linux desktops."
+license = "GPL-3.0-or-later"
+authors = ["bhack"]
+keywords = ["audio", "desktop", "equalizer", "pipewire", "gtk", "linux", "parametric-eq"]
+categories = ["audio", "gui", "multimedia"]
+readme = "README.md"
+repository = "https://github.com/bhack/mini-eq"
+
+[dependencies]
+# PipeWire
+pipewire = "0.10.1"
+pipewire-sys = "0.10.1"
+pipewire-native = "0.1.4"
+
+# GTK4 / Libadwaita UI
+gtk4 = "0.11.4"
+libadwaita = "0.9.2"
+glib = "0.22.9"
+pango = "0.22.9"
+
+# CLI
+clap = { version = "4.6.7", features = ["derive"] }
+
+# Async runtime
+tokio = { version = "1.53.1", features = ["full"] }
+
+# Serialization
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1"
+
+# D-Bus
+dbus = "0.9.12"
+
+# FFT
+rustfft = "6.4.1"
+
+# Loudness
+ebur128 = "0.1.10"
+
+# System utilities
+nix = { version = "0.31.3", features = ["fs", "process", "socket", "poll"] }
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+
+# File I/O
+dirs = "5.0"
+anyhow = "1"
+thiserror = "1"
+
+[build-dependencies]
+
+[dev-dependencies]
+
+[profile.release]
+opt-level = 3
+lto = true
+panic = "abort"
