@@ -241,7 +241,7 @@ cargo run -- --headless --background --duration 30
 
 ```bash
 # Install dev dependencies (if not already installed)
-cd /tmp/kilo && apt download libgtk-4-dev libadwaita-1-dev libgraphene-1.0-dev libappstream-dev
+cd /tmp/kilo && apt download libgtk-4-dev libadwaita-1-dev libgraphene-1.0-dev libpipewire-0.3-dev libspa-0.2-dev libdbus-1-dev
 for deb in *.deb; do dpkg-deb -x "$deb" ~/code/mini-eq/deps/; done
 
 # Build
@@ -254,6 +254,12 @@ cargo test --lib
 # Run
 cargo run --release -- --background --auto-route
 ```
+
+## CI Notes
+
+- GitHub Actions workflow installs `libdbus-1-dev` (required by `libdbus-sys v0.2.7`)
+- CI runs on `ubuntu-24.04` with `stable` Rust toolchain
+- Jobs: `cargo check --release`, `cargo test --lib`, `cargo clippy`, `cargo fmt --check`, `cargo build --release`
 
 > **Full project status:** see `docs/{date}-updates.md` and `docs/{date}-handover.md`.
 > This document is a static starting point, reference for onboarding not a journal or dynamic status update.
