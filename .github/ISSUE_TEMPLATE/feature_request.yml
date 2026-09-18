@@ -1,0 +1,50 @@
+name: Feature Request
+description: Suggest a new feature or enhancement for mini-eq
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a feature! Please describe it in detail.
+  - type: input
+    id: title
+    attributes:
+      label: Feature Title
+      description: A brief title for the feature.
+      placeholder: "e.g., Add Harman Curve preset"
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A detailed description of the feature you'd like to see.
+      placeholder: "Describe the feature..."
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: Why is this feature needed? What problem does it solve?
+      placeholder: "Why is this important?"
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Any alternative solutions or features you've considered.
+      placeholder: "Alternative approaches..."
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other context, screenshots, or references.
+      placeholder: "Additional info..."
+  - type: checkbox
+    attributes:
+      label: I have checked existing issues
+      description: I have searched the existing issues and believe this is not a duplicate.
+      options:
+        - label: "I have checked existing issues"
+          required: true
