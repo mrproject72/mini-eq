@@ -1,15 +1,13 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 
 use pipewire::{
     core::CoreRc,
     node::Node,
-    properties::{PropertiesBox, properties},
-    types::ObjectType,
+    properties::properties,
     Error,
 };
 use pipewire::keys;
-use log::{info, warn, debug};
+use log::info;
 
 use crate::core::{
     SAMPLE_RATE,
@@ -25,15 +23,15 @@ pub struct FilterChain {
     enabled: bool,
 }
 
-struct FilterNode {
-    id: u32,
+pub struct FilterNode {
+    _id: u32,
     filter_type: FilterType,
     frequency: f64,
     gain_db: f64,
     q: f64,
     enabled: bool,
     coefficients: BiquadCoefficients,
-    node: Option<Node>,
+    _node: Option<Node>,
 }
 
 impl FilterChain {
@@ -90,14 +88,14 @@ impl FilterChain {
             let filter_id = band.index as u32;
 
             let filter_node_info = FilterNode {
-                id: filter_id,
+                _id: filter_id,
                 filter_type: band.filter_type,
                 frequency: band.frequency,
                 gain_db: band.gain_db,
                 q: band.q,
                 enabled: band.enabled,
                 coefficients: coeffs,
-                node: None,
+                _node: None,
             };
 
             self.filter_graph.insert(filter_id, filter_node_info);

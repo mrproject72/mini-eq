@@ -5,7 +5,7 @@ use pipewire::{
     context::ContextRc,
     core::CoreRc,
     node::Node,
-    properties::{PropertiesBox, properties},
+    properties::properties,
     types::ObjectType,
     Error,
 };
@@ -20,7 +20,7 @@ use crate::core::{
 
 pub struct PipeWireBackend {
     mainloop: MainLoopRc,
-    context: ContextRc,
+    _context: ContextRc,
     core: CoreRc,
     virtual_sink_node: Option<Node>,
     filter_chain_node: Option<Node>,
@@ -44,7 +44,7 @@ impl PipeWireBackend {
 
         let backend = PipeWireBackend {
             mainloop,
-            context,
+            _context: context,
             core,
             virtual_sink_node: None,
             filter_chain_node: None,
@@ -146,7 +146,7 @@ impl PipeWireBackend {
 
     fn configure_biquad_node(
         &self,
-        filter_node: &Node,
+        _filter_node: &Node,
         index: usize,
         band: &EqBand,
         coeffs: &BiquadCoefficients,
@@ -211,7 +211,7 @@ impl PipeWireBackend {
     pub fn link_nodes(&mut self) -> Result<(), Error> {
         info!("Linking PipeWire nodes");
 
-        if let (Some(sink), Some(filter), Some(output)) =
+        if let (Some(_sink), Some(_filter), Some(_output)) =
             (&self.virtual_sink_node, &self.filter_chain_node, &self.output_node)
         {
             info!("Linking: sink -> filter_chain -> output");
