@@ -200,17 +200,21 @@ pub fn band_biquad_coefficients(
         return BiquadCoefficients::identity();
     }
 
-    let wet = if band.enabled && band_is_effective(band, solo_active) && band.filter_type.is_selectable() {
-        1.0
-    } else {
-        0.0
-    };
+    let wet =
+        if band.enabled && band_is_effective(band, solo_active) && band.filter_type.is_selectable()
+        {
+            1.0
+        } else {
+            0.0
+        };
 
     if wet == 0.0 {
         return BiquadCoefficients::identity();
     }
 
-    let f0 = band.frequency.clamp(EQ_FREQUENCY_MIN_HZ, EQ_FREQUENCY_MAX_HZ);
+    let f0 = band
+        .frequency
+        .clamp(EQ_FREQUENCY_MIN_HZ, EQ_FREQUENCY_MAX_HZ);
     let gain = band.gain_db.clamp(EQ_GAIN_MIN_DB, EQ_GAIN_MAX_DB);
     let q = band.q.clamp(EQ_Q_MIN, EQ_Q_MAX);
     let a = 10.0_f64.powf(gain / 40.0);

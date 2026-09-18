@@ -1,18 +1,10 @@
 use std::collections::HashMap;
 
-use pipewire::{
-    core::CoreRc,
-    node::Node,
-    properties::properties,
-    Error,
-};
-use pipewire::keys;
 use log::info;
+use pipewire::keys;
+use pipewire::{Error, core::CoreRc, node::Node, properties::properties};
 
-use crate::core::{
-    SAMPLE_RATE,
-    EqBand, FilterType, BiquadCoefficients,
-};
+use crate::core::{BiquadCoefficients, EqBand, FilterType, SAMPLE_RATE};
 
 pub struct FilterChain {
     core: CoreRc,
@@ -65,7 +57,9 @@ impl FilterChain {
             "audio.format" => "f32le",
         };
 
-        let filter_node = self.core.create_object::<Node>("filter-chain", &filter_props)?;
+        let filter_node = self
+            .core
+            .create_object::<Node>("filter-chain", &filter_props)?;
         self.filter_node = Some(filter_node);
         self.enabled = true;
 
@@ -118,7 +112,8 @@ impl FilterChain {
     pub fn update_coefficients(&mut self, bands: &[EqBand]) -> Result<(), Error> {
         for band in bands {
             if let Some(filter) = self.filter_graph.get_mut(&(band.index as u32)) {
-                filter.coefficients = crate::core::band_biquad_coefficients(band, SAMPLE_RATE, false);
+                filter.coefficients =
+                    crate::core::band_biquad_coefficients(band, SAMPLE_RATE, false);
                 filter.frequency = band.frequency;
                 filter.gain_db = band.gain_db;
                 filter.q = band.q;
@@ -132,7 +127,11 @@ impl FilterChain {
     pub fn enable_filter(&mut self, band_index: usize, enabled: bool) -> Result<(), Error> {
         if let Some(filter) = self.filter_graph.get_mut(&(band_index as u32)) {
             filter.enabled = enabled;
-            info!("Band {} filter {}", band_index, if enabled { "enabled" } else { "disabled" });
+            info!(
+                "Band {} filter {}",
+                band_index,
+                if enabled { "enabled" } else { "disabled" }
+            );
         }
         Ok(())
     }
@@ -170,9 +169,13 @@ impl FilterChain {
 
 impl Default for FilterChain {
     fn default() -> Self {
-        let mainloop = pipewire::main_loop::MainLoopRc::new(None).expect("Failed to create MainLoop");
-        let context = pipewire::context::ContextRc::new(&mainloop, None).expect("Failed to create Context");
-        let core = context.connect_rc(None).expect("Failed to connect to PipeWire");
+        let mainloop =
+            pipewire::main_loop::MainLoopRc::new(None).expect("Failed to create MainLoop");
+        let context =
+            pipewire::context::ContextRc::new(&mainloop, None).expect("Failed to create Context");
+        let core = context
+            .connect_rc(None)
+            .expect("Failed to connect to PipeWire");
         FilterChain::new(core)
     }
 }

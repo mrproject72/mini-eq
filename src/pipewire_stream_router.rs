@@ -1,19 +1,11 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use pipewire::{
-    core::CoreRc,
-    stream::StreamBox,
-    properties::properties,
-    types::ObjectType,
-    Error,
-};
+use log::{debug, info};
 use pipewire::keys;
-use log::{info, debug};
+use pipewire::{Error, core::CoreRc, properties::properties, stream::StreamBox, types::ObjectType};
 
-use crate::core::{
-    SAMPLE_RATE, VIRTUAL_SINK_BASE, FILTER_OUTPUT_SUFFIX, OUTPUT_CLIENT_NAME,
-};
+use crate::core::{FILTER_OUTPUT_SUFFIX, OUTPUT_CLIENT_NAME, SAMPLE_RATE, VIRTUAL_SINK_BASE};
 
 #[derive(Debug, Clone)]
 pub struct StreamInfo {
@@ -95,16 +87,19 @@ impl PipeWireStreamRouter {
         self.streams.lock().unwrap().values().cloned().collect()
     }
 
-    pub fn route_to_virtual_sink(
-        &self,
-        stream_id: u32,
-    ) -> Result<(), Error> {
-        info!("Routing stream {} to virtual sink {}", stream_id, VIRTUAL_SINK_BASE);
+    pub fn route_to_virtual_sink(&self, stream_id: u32) -> Result<(), Error> {
+        info!(
+            "Routing stream {} to virtual sink {}",
+            stream_id, VIRTUAL_SINK_BASE
+        );
 
         let sink_name = format!("{}{}", VIRTUAL_SINK_BASE, FILTER_OUTPUT_SUFFIX);
 
         let mut routing = self.routing_table.lock().unwrap();
-        routing.insert(stream_id, sink_name.clone().into_bytes().iter().sum::<u8>() as u32);
+        routing.insert(
+            stream_id,
+            sink_name.clone().into_bytes().iter().sum::<u8>() as u32,
+        );
 
         {
             let mut streams_guard = self.streams.lock().unwrap();
@@ -153,7 +148,12 @@ impl PipeWireStreamRouter {
     }
 
     pub fn get_virtual_sink_streams(&self) -> Vec<StreamInfo> {
-        self.virtual_sink_streams.lock().unwrap().values().cloned().collect()
+        self.virtual_sink_streams
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect()
     }
 
     pub fn get_routing_table(&self) -> HashMap<u32, u32> {
@@ -203,9 +203,13 @@ impl PipeWireStreamRouter {
 
 impl Default for PipeWireStreamRouter {
     fn default() -> Self {
-        let mainloop = pipewire::main_loop::MainLoopRc::new(None).expect("Failed to create MainLoop");
-        let context = pipewire::context::ContextRc::new(&mainloop, None).expect("Failed to create Context");
-        let core = context.connect_rc(None).expect("Failed to connect to PipeWire");
+        let mainloop =
+            pipewire::main_loop::MainLoopRc::new(None).expect("Failed to create MainLoop");
+        let context =
+            pipewire::context::ContextRc::new(&mainloop, None).expect("Failed to create Context");
+        let core = context
+            .connect_rc(None)
+            .expect("Failed to connect to PipeWire");
         PipeWireStreamRouter::new(core)
     }
 }

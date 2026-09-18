@@ -1,13 +1,9 @@
 use std::sync::{Arc, Mutex};
 
-use pipewire::{
-    core::CoreRc,
-    types::ObjectType,
-    Error,
-};
-use log::{info, warn, debug};
+use log::{debug, info, warn};
+use pipewire::{Error, core::CoreRc, types::ObjectType};
 
-use crate::core::{VIRTUAL_SINK_BASE};
+use crate::core::VIRTUAL_SINK_BASE;
 
 #[derive(Debug, Clone)]
 pub struct OutputRoute {
@@ -66,7 +62,8 @@ impl PipeWireRoutes {
                 && let Some(props) = &global.props
             {
                 let name = props.get("node.name").unwrap_or("unknown");
-                if name.contains("audio.sink") || name.contains("output") || name.contains("analog") {
+                if name.contains("audio.sink") || name.contains("output") || name.contains("analog")
+                {
                     let mut routes_guard = routes_clone.lock().unwrap();
                     routes_guard.push(OutputRoute {
                         id: global.id,
@@ -90,7 +87,9 @@ impl PipeWireRoutes {
     }
 
     pub fn get_active_route(&self) -> Option<OutputRoute> {
-        self.routes.lock().unwrap()
+        self.routes
+            .lock()
+            .unwrap()
             .iter()
             .find(|r| r.active)
             .cloned()
@@ -124,7 +123,10 @@ impl PipeWireRoutes {
     }
 
     pub fn create_link(&self, source_id: u32, target_name: &str) -> Result<u32, Error> {
-        info!("Creating link from source {} to target {}", source_id, target_name);
+        info!(
+            "Creating link from source {} to target {}",
+            source_id, target_name
+        );
 
         let registry = self.core.get_registry()?;
 
@@ -179,11 +181,7 @@ impl PipeWireRoutes {
         self.links.lock().unwrap().clone()
     }
 
-    pub fn route_stream(
-        &self,
-        _stream_id: u32,
-        _target_sink: &str,
-    ) -> Result<(), Error> {
+    pub fn route_stream(&self, _stream_id: u32, _target_sink: &str) -> Result<(), Error> {
         info!("Routing stream to sink");
         Ok(())
     }
@@ -208,9 +206,13 @@ impl PipeWireRoutes {
 
 impl Default for PipeWireRoutes {
     fn default() -> Self {
-        let mainloop = pipewire::main_loop::MainLoopRc::new(None).expect("Failed to create MainLoop");
-        let context = pipewire::context::ContextRc::new(&mainloop, None).expect("Failed to create Context");
-        let core = context.connect_rc(None).expect("Failed to connect to PipeWire");
+        let mainloop =
+            pipewire::main_loop::MainLoopRc::new(None).expect("Failed to create MainLoop");
+        let context =
+            pipewire::context::ContextRc::new(&mainloop, None).expect("Failed to create Context");
+        let core = context
+            .connect_rc(None)
+            .expect("Failed to connect to PipeWire");
         PipeWireRoutes::new(core)
     }
 }

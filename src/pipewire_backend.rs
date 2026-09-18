@@ -1,21 +1,15 @@
 use std::sync::{Arc, Mutex};
 
-use pipewire::{
-    main_loop::MainLoopRc,
-    context::ContextRc,
-    core::CoreRc,
-    node::Node,
-    properties::properties,
-    types::ObjectType,
-    Error,
-};
+use log::{debug, info, warn};
 use pipewire::keys;
-use log::{info, warn, debug};
+use pipewire::{
+    Error, context::ContextRc, core::CoreRc, main_loop::MainLoopRc, node::Node,
+    properties::properties, types::ObjectType,
+};
 
 use crate::core::{
-    OUTPUT_CLIENT_NAME, VIRTUAL_SINK_BASE, VIRTUAL_SINK_DESCRIPTION,
-    FILTER_OUTPUT_SUFFIX, SAMPLE_RATE,
-    EqBand, FilterType, BiquadCoefficients,
+    BiquadCoefficients, EqBand, FILTER_OUTPUT_SUFFIX, FilterType, OUTPUT_CLIENT_NAME, SAMPLE_RATE,
+    VIRTUAL_SINK_BASE, VIRTUAL_SINK_DESCRIPTION,
 };
 
 pub struct PipeWireBackend {
@@ -85,10 +79,7 @@ impl PipeWireBackend {
             "node.latency" => "25000/48000",
         };
 
-        let node = self.core.create_object::<Node>(
-            "adapter",
-            &sink_props,
-        )?;
+        let node = self.core.create_object::<Node>("adapter", &sink_props)?;
 
         self.virtual_sink_node = Some(node);
         info!("Virtual sink created successfully");
@@ -110,10 +101,9 @@ impl PipeWireBackend {
             "audio.format" => "f32le",
         };
 
-        let filter_node = self.core.create_object::<Node>(
-            "filter-chain",
-            &filter_props,
-        )?;
+        let filter_node = self
+            .core
+            .create_object::<Node>("filter-chain", &filter_props)?;
 
         self.filter_chain_node = Some(filter_node);
         info!("Filter chain created successfully");
@@ -174,8 +164,14 @@ impl PipeWireBackend {
             props.insert("biquad.enabled", "false");
         }
 
-        debug!("Configured biquad filter {}: freq={} gain={} q={} type={}",
-            index, band.frequency, band.gain_db, band.q, band.filter_type.name());
+        debug!(
+            "Configured biquad filter {}: freq={} gain={} q={} type={}",
+            index,
+            band.frequency,
+            band.gain_db,
+            band.q,
+            band.filter_type.name()
+        );
 
         Ok(())
     }
@@ -197,10 +193,7 @@ impl PipeWireBackend {
             "audio.format" => "f32le",
         };
 
-        let node = self.core.create_object::<Node>(
-            "adapter",
-            &output_props,
-        )?;
+        let node = self.core.create_object::<Node>("adapter", &output_props)?;
 
         self.output_node = Some(node);
         info!("Output node created successfully");
@@ -211,9 +204,11 @@ impl PipeWireBackend {
     pub fn link_nodes(&mut self) -> Result<(), Error> {
         info!("Linking PipeWire nodes");
 
-        if let (Some(_sink), Some(_filter), Some(_output)) =
-            (&self.virtual_sink_node, &self.filter_chain_node, &self.output_node)
-        {
+        if let (Some(_sink), Some(_filter), Some(_output)) = (
+            &self.virtual_sink_node,
+            &self.filter_chain_node,
+            &self.output_node,
+        ) {
             info!("Linking: sink -> filter_chain -> output");
         } else {
             warn!("Not all nodes available for linking");
@@ -235,7 +230,8 @@ impl PipeWireBackend {
                 && let Some(props) = &global.props
             {
                 let name = props.get("node.name").unwrap_or("unknown");
-                if name.contains("audio.sink") || name.contains("output") || name.contains("analog") {
+                if name.contains("audio.sink") || name.contains("output") || name.contains("analog")
+                {
                     let mut routes_guard = routes_clone.lock().unwrap();
                     routes_guard.push(OutputRoute {
                         id: global.id,

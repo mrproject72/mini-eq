@@ -52,7 +52,14 @@ fn main() {
 
     env_logger::init();
 
-    println!("{} v{} starting...", cli.command.as_ref().map(|c| format!("{:?}", c)).unwrap_or_else(|| "mini-eq".to_string()), env!("CARGO_PKG_VERSION"));
+    println!(
+        "{} v{} starting...",
+        cli.command
+            .as_ref()
+            .map(|c| format!("{:?}", c))
+            .unwrap_or_else(|| "mini-eq".to_string()),
+        env!("CARGO_PKG_VERSION")
+    );
 
     if cli.background {
         println!("Running in background mode");
