@@ -210,9 +210,9 @@ pub fn band_biquad_coefficients(
         return BiquadCoefficients::identity();
     }
 
-    let f0 = band.frequency.max(EQ_FREQUENCY_MIN_HZ).min(EQ_FREQUENCY_MAX_HZ);
-    let gain = band.gain_db.max(EQ_GAIN_MIN_DB).min(EQ_GAIN_MAX_DB);
-    let q = band.q.max(EQ_Q_MIN).min(EQ_Q_MAX);
+    let f0 = band.frequency.clamp(EQ_FREQUENCY_MIN_HZ, EQ_FREQUENCY_MAX_HZ);
+    let gain = band.gain_db.clamp(EQ_GAIN_MIN_DB, EQ_GAIN_MAX_DB);
+    let q = band.q.clamp(EQ_Q_MIN, EQ_Q_MAX);
     let a = 10.0_f64.powf(gain / 40.0);
     let omega = 2.0 * PI * f0 / sample_rate;
     let sin_omega = omega.sin();
@@ -334,12 +334,8 @@ pub fn band_biquad_coefficients(
     }
 }
 
-pub fn band_is_effective(band: &EqBand, solo_active: bool) -> bool {
-    if solo_active {
-        band.enabled && band.filter_type != FilterType::Off
-    } else {
-        band.enabled && band.filter_type != FilterType::Off
-    }
+pub fn band_is_effective(band: &EqBand, _solo_active: bool) -> bool {
+    band.enabled && band.filter_type != FilterType::Off
 }
 
 impl FilterType {

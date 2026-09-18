@@ -3,15 +3,13 @@ use std::sync::{Arc, Mutex};
 
 use pipewire::{
     core::CoreRc,
-    registry::RegistryRc,
-    node::Node,
     stream::StreamBox,
-    properties::{PropertiesBox, properties},
+    properties::properties,
     types::ObjectType,
     Error,
 };
 use pipewire::keys;
-use log::{info, warn, debug};
+use log::{info, debug};
 
 use crate::core::{
     SAMPLE_RATE, VIRTUAL_SINK_BASE, FILTER_OUTPUT_SUFFIX, OUTPUT_CLIENT_NAME,
@@ -67,23 +65,23 @@ impl PipeWireStreamRouter {
         let streams_clone = streams.clone();
         let listener = registry.add_listener_local();
         let listener = listener.global(move |global| {
-            if global.type_ == ObjectType::Node {
-                if let Some(props) = &global.props {
-                    let name = props.get("node.name").unwrap_or("unknown");
-                    let info = StreamInfo {
-                        id: global.id,
-                        node_id: global.id,
-                        name: name.to_string(),
-                        media_type: String::new(),
-                        media_role: String::new(),
-                        channels: 2,
-                        rate: SAMPLE_RATE as u32,
-                        target_sink: None,
-                        active: true,
-                    };
-                    streams_clone.lock().unwrap().push(info);
-                    debug!("Found stream: {} (id={})", name, global.id);
-                }
+            if global.type_ == ObjectType::Node
+                && let Some(props) = &global.props
+            {
+                let name = props.get("node.name").unwrap_or("unknown");
+                let info = StreamInfo {
+                    id: global.id,
+                    node_id: global.id,
+                    name: name.to_string(),
+                    media_type: String::new(),
+                    media_role: String::new(),
+                    channels: 2,
+                    rate: SAMPLE_RATE as u32,
+                    target_sink: None,
+                    active: true,
+                };
+                streams_clone.lock().unwrap().push(info);
+                debug!("Found stream: {} (id={})", name, global.id);
             }
         });
         let _listener = listener.register();
@@ -174,7 +172,7 @@ impl PipeWireStreamRouter {
         self.current_sink.as_deref()
     }
 
-    pub fn create_virtual_sink_stream(&self) -> Result<StreamBox, Error> {
+    pub fn create_virtual_sink_stream(&self) -> Result<StreamBox<'_>, Error> {
         info!("Creating virtual sink stream");
 
         let sink_name = format!("{}{}", VIRTUAL_SINK_BASE, FILTER_OUTPUT_SUFFIX);

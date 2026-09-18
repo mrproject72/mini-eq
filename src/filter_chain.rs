@@ -106,7 +106,7 @@ impl FilterChain {
     }
 
     pub fn set_preamp(&mut self, gain_db: f64) -> Result<(), Error> {
-        self.preamp_gain = gain_db.max(-24.0).min(6.0);
+        self.preamp_gain = gain_db.clamp(-24.0, 6.0);
         info!("Filter chain preamp set to {} dB", self.preamp_gain);
         Ok(())
     }

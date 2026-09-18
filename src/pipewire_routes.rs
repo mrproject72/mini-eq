@@ -2,12 +2,9 @@ use std::sync::{Arc, Mutex};
 
 use pipewire::{
     core::CoreRc,
-    registry::RegistryRc,
-    node::Node,
     types::ObjectType,
     Error,
 };
-use pipewire::keys;
 use log::{info, warn, debug};
 
 use crate::core::{VIRTUAL_SINK_BASE};
@@ -65,19 +62,19 @@ impl PipeWireRoutes {
         let routes_clone = routes.clone();
         let listener = registry.add_listener_local();
         let listener = listener.global(move |global| {
-            if global.type_ == ObjectType::Node {
-                if let Some(props) = &global.props {
-                    let name = props.get("node.name").unwrap_or("unknown");
-                    if name.contains("audio.sink") || name.contains("output") || name.contains("analog") {
-                        let mut routes_guard = routes_clone.lock().unwrap();
-                        routes_guard.push(OutputRoute {
-                            id: global.id,
-                            name: name.to_string(),
-                            description: props.get("node.description").unwrap_or("").to_string(),
-                            active: true,
-                        });
-                        debug!("Found output route: {} (id={})", name, global.id);
-                    }
+            if global.type_ == ObjectType::Node
+                && let Some(props) = &global.props
+            {
+                let name = props.get("node.name").unwrap_or("unknown");
+                if name.contains("audio.sink") || name.contains("output") || name.contains("analog") {
+                    let mut routes_guard = routes_clone.lock().unwrap();
+                    routes_guard.push(OutputRoute {
+                        id: global.id,
+                        name: name.to_string(),
+                        description: props.get("node.description").unwrap_or("").to_string(),
+                        active: true,
+                    });
+                    debug!("Found output route: {} (id={})", name, global.id);
                 }
             }
         });
@@ -138,13 +135,13 @@ impl PipeWireRoutes {
 
         let listener = registry.add_listener_local();
         let listener = listener.global(move |global| {
-            if global.type_ == ObjectType::Node {
-                if let Some(props) = &global.props {
-                    let name = props.get("node.name").unwrap_or("unknown");
-                    let target = target_name_clone.lock().unwrap();
-                    if name == *target {
-                        *link_id_clone.lock().unwrap() = global.id;
-                    }
+            if global.type_ == ObjectType::Node
+                && let Some(props) = &global.props
+            {
+                let name = props.get("node.name").unwrap_or("unknown");
+                let target = target_name_clone.lock().unwrap();
+                if name == *target {
+                    *link_id_clone.lock().unwrap() = global.id;
                 }
             }
         });

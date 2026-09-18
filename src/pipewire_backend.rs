@@ -231,18 +231,18 @@ impl PipeWireBackend {
         let routes_clone = routes.clone();
         let listener = registry.add_listener_local();
         let listener = listener.global(move |global| {
-            if global.type_ == ObjectType::Node {
-                if let Some(props) = &global.props {
-                    let name = props.get("node.name").unwrap_or("unknown");
-                    if name.contains("audio.sink") || name.contains("output") || name.contains("analog") {
-                        let mut routes_guard = routes_clone.lock().unwrap();
-                        routes_guard.push(OutputRoute {
-                            id: global.id,
-                            name: name.to_string(),
-                            description: props.get("node.description").unwrap_or("").to_string(),
-                        });
-                        debug!("Found output route: {} (id={})", name, global.id);
-                    }
+            if global.type_ == ObjectType::Node
+                && let Some(props) = &global.props
+            {
+                let name = props.get("node.name").unwrap_or("unknown");
+                if name.contains("audio.sink") || name.contains("output") || name.contains("analog") {
+                    let mut routes_guard = routes_clone.lock().unwrap();
+                    routes_guard.push(OutputRoute {
+                        id: global.id,
+                        name: name.to_string(),
+                        description: props.get("node.description").unwrap_or("").to_string(),
+                    });
+                    debug!("Found output route: {} (id={})", name, global.id);
                 }
             }
         });
@@ -275,7 +275,7 @@ impl PipeWireBackend {
     }
 
     pub fn set_preamp(&mut self, gain_db: f64) -> Result<(), Error> {
-        self.preamp_gain = gain_db.max(-24.0).min(6.0);
+        self.preamp_gain = gain_db.clamp(-24.0, 6.0);
         info!("Preamp gain set to {} dB", self.preamp_gain);
         Ok(())
     }
