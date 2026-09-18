@@ -230,7 +230,7 @@ cargo run -- --headless --background --duration 30
 
 - **Phase 1**: ✅ Complete — Project skeleton, Cargo.toml, basic structure
 - **Phase 2**: ✅ Complete — Core module (biquad coefficients, band config, constants, 4 unit tests passing)
-- **Phase 3**: 🔄 In progress — PipeWire backend (filter-chain, virtual sink, routing)
+- **Phase 3**: ✅ Complete — PipeWire backend (filter-chain, virtual sink, routing, stream router)
 - **Phase 4**: ⏳ Pending — UI (GTK4/Libadwaita window, band faders, presets)
 - **Phase 5**: ⏳ Pending — Analyzer (FFT, LUFS loudness)
 - **Phase 6**: ⏳ Pending — AutoEq/APO preset support
