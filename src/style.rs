@@ -186,7 +186,6 @@ const STYLE_CSS: &str = r#"
 .graph-stage {
     background-color: rgb(20, 20, 22);
     border-radius: 8px;
-    overflow: hidden;
 }
 
 .route-box {
