@@ -232,7 +232,7 @@ cargo run -- --headless --background --duration 30
 - **Phase 2**: ✅ Complete — Core module (biquad coefficients, band config, constants, 4 unit tests passing)
 - **Phase 3**: ✅ Complete — PipeWire backend (filter-chain, virtual sink, routing, stream router)
 - **Phase 4**: ✅ Complete — GTK4/Libadwaita UI skeleton (window, band fader, presets, utility panes, appearance, style, instance guard)
-- **Phase 5**: ⏳ Pending — Analyzer (FFT, LUFS loudness)
+- **Phase 5**: ✅ Complete — Analyzer (FFT spectrum via `rustfft`, LUFS loudness via `ebur128`), 21 unit tests passing
 - **Phase 6**: ⏳ Pending — AutoEq/APO preset support
 - **Phase 7**: ⏳ Pending — Background mode, D-Bus control, desktop integration
 - **Phase 8**: ⏳ Pending — Testing, Flatpak packaging, performance validation

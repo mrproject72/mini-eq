@@ -1,6 +1,17 @@
 use serde::{Deserialize, Serialize};
 use std::f64::consts::PI;
 
+/// Clamp a value to the range [lower, upper].
+pub fn clamp<T: PartialOrd>(value: T, lower: T, upper: T) -> T {
+    if value < lower {
+        lower
+    } else if value > upper {
+        upper
+    } else {
+        value
+    }
+}
+
 // ── Application ──────────────────────────────────────────────────────────────
 
 pub const APP_NAME: &str = "Mini EQ";

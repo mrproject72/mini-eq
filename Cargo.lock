@@ -945,6 +945,7 @@ dependencies = [
  "libadwaita",
  "log",
  "nix",
+ "num-complex",
  "pango",
  "pipewire",
  "pipewire-native",

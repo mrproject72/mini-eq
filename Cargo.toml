@@ -38,6 +38,7 @@ dbus = "0.9.12"
 
 # FFT
 rustfft = "6.4.1"
+num-complex = "0.4"
 
 # Loudness
 ebur128 = "0.1.10"
