@@ -228,14 +228,32 @@ cargo run -- --headless --background --duration 30
 
 ## Status Tracking
 
-- **Phase 1**: Project skeleton, Cargo.toml, basic structure
-- **Phase 2**: Core module (biquad coefficients, band config, constants)
-- **Phase 3**: PipeWire backend (filter-chain, virtual sink, routing)
-- **Phase 4**: UI (GTK4/Libadwaita window, band faders, presets)
-- **Phase 5**: Analyzer (FFT, LUFS loudness)
-- **Phase 6**: AutoEq/APO preset support
-- **Phase 7**: Background mode, D-Bus control, desktop integration
-- **Phase 8**: Testing, Flatpak packaging, performance validation
+- **Phase 1**: ✅ Complete — Project skeleton, Cargo.toml, basic structure
+- **Phase 2**: ✅ Complete — Core module (biquad coefficients, band config, constants, 4 unit tests passing)
+- **Phase 3**: 🔄 In progress — PipeWire backend (filter-chain, virtual sink, routing)
+- **Phase 4**: ⏳ Pending — UI (GTK4/Libadwaita window, band faders, presets)
+- **Phase 5**: ⏳ Pending — Analyzer (FFT, LUFS loudness)
+- **Phase 6**: ⏳ Pending — AutoEq/APO preset support
+- **Phase 7**: ⏳ Pending — Background mode, D-Bus control, desktop integration
+- **Phase 8**: ⏳ Pending — Testing, Flatpak packaging, performance validation
+
+### Build instructions
+
+```bash
+# Install dev dependencies (if not already installed)
+cd /tmp/kilo && apt download libgtk-4-dev libadwaita-1-dev libgraphene-1.0-dev libappstream-dev
+for deb in *.deb; do dpkg-deb -x "$deb" ~/code/mini-eq/deps/; done
+
+# Build
+export PKG_CONFIG_PATH="$HOME/code/mini-eq/deps/usr/lib/x86_64-linux-gnu/pkgconfig:$PKG_CONFIG_PATH"
+cargo build --release
+
+# Test
+cargo test --lib
+
+# Run
+cargo run --release -- --background --auto-route
+```
 
 > **Full project status:** see `docs/{date}-updates.md` and `docs/{date}-handover.md`.
 > This document is a static starting point, reference for onboarding not a journal or dynamic status update.
