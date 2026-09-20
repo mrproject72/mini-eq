@@ -1,13 +1,18 @@
 //! Mini EQ — main entry point.
 
-use adw::prelude::*;
-use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::Mutex;
 
+use adw::prelude::*;
+use clap::{Parser, Subcommand};
+use std::path::PathBuf;
+
 use mini_eq::background;
+use mini_eq::core::default_bands;
 use mini_eq::dbus_control::{MiniEqAppHandler, MiniEqDBusControl};
+use mini_eq::pipewire_backend::PipeWireBackend;
 
 #[derive(Parser)]
 #[command(name = "mini-eq")]
@@ -59,10 +64,16 @@ struct AppState {
     start_active_at_login: Mutex<bool>,
     analyzer_enabled: Mutex<bool>,
     window_visible: Mutex<bool>,
+    backend: Rc<RefCell<Option<PipeWireBackend>>>,
 }
+
+unsafe impl Send for AppState {}
+unsafe impl Sync for AppState {}
 
 impl AppState {
     fn new() -> Arc<Self> {
+        let bands = default_bands();
+        let backend = PipeWireBackend::new(bands).ok();
         Arc::new(Self {
             eq_enabled: Mutex::new(true),
             routed: Mutex::new(false),
@@ -73,6 +84,7 @@ impl AppState {
             start_active_at_login: Mutex::new(background::load_start_active_at_login()),
             analyzer_enabled: Mutex::new(false),
             window_visible: Mutex::new(true),
+            backend: Rc::new(RefCell::new(backend)),
         })
     }
 }
@@ -152,7 +164,8 @@ fn main() {
     launch_gui(cli.background, cli.auto_route);
 }
 
-fn launch_gui(_background_mode: bool, _auto_route: bool) {
+#[allow(clippy::collapsible_if)]
+fn launch_gui(_background_mode: bool, auto_route: bool) {
     let _ = adw::init();
     let app = adw::Application::new(
         Some("io.github.bhack.mini-eq"),
@@ -160,6 +173,30 @@ fn launch_gui(_background_mode: bool, _auto_route: bool) {
     );
 
     let app_state = AppState::new();
+
+    // Initialize PipeWire backend
+    {
+        let mut backend = app_state.backend.borrow_mut();
+        if let Some(backend) = backend.as_mut() {
+            if let Err(e) = backend.create_virtual_sink() {
+                log::warn!("Failed to create virtual sink: {}", e);
+            }
+            if let Err(e) = backend.create_filter_chain() {
+                log::warn!("Failed to create filter chain: {}", e);
+            }
+            if let Err(e) = backend.create_output_node() {
+                log::warn!("Failed to create output node: {}", e);
+            }
+            if let Err(e) = backend.link_nodes() {
+                log::warn!("Failed to link nodes: {}", e);
+            }
+            if auto_route {
+                if let Err(e) = backend.auto_route_to_sink("mini_eq_sink_output") {
+                    log::warn!("Failed to auto-route: {}", e);
+                }
+            }
+        }
+    }
 
     // Register D-Bus control
     let dbus_control = MiniEqDBusControl::new(app_state.clone());
