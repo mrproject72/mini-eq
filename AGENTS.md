@@ -228,14 +228,21 @@ cargo run -- --headless --background --duration 30
 
 ## Status Tracking
 
-- **Phase 1**: ✅ Complete — Project skeleton, Cargo.toml, basic structure
-- **Phase 2**: ✅ Complete — Core module (biquad coefficients, band config, constants, 4 unit tests passing)
-- **Phase 3**: ✅ Complete — PipeWire backend (filter-chain, virtual sink, routing, stream router)
-- **Phase 4**: ✅ Complete — GTK4/Libadwaita UI skeleton (window, band fader, presets, utility panes, appearance, style, instance guard)
-- **Phase 5**: ✅ Complete — Analyzer (FFT spectrum via `rustfft`, LUFS loudness via `ebur128`), 21 unit tests passing
-- **Phase 6**: ✅ Complete — AutoEq/APO preset support (APO file parser, AutoEq entry search, API download)
-- **Phase 7**: ⏳ Pending — Background mode, D-Bus control, desktop integration
-- **Phase 8**: ⏳ Pending — Testing, Flatpak packaging, performance validation
+- **Phase 0**: ✅ Complete — Source-linked divergence assessment against upstream `bhack/mini-eq` main branch; full 8-phase Rust conversion plan documented at `docs/PLAN/divergence-assessment-and-rust-plan.md`.
+- **Phase 1**: ⏳ In Progress — Backend engine parity: `pipewire_backend.rs` and `routing.rs` compile but are unverified on live PipeWire; virtual sink/filter-chain/output node creation and stream routing are stubs.
+- **Phase 2**: ✅ Complete — Graph and fader interactions: fader rendering/interaction converged with upstream Python; 3-layer graph overlay with click+drag editing; responsive fader heights.
+- **Phase 3**: ✅ Complete — Adaptive shell: `AdwOverlaySplitView` + `AdwClamp(max=1480)` + `AdwToastOverlay`, breakpoints at 1320sp/1080sp, F9 toggle, toolbar with output dropdown + route switch + inspector toggle.
+- **Phase 4**: ✅ Complete — Utility/sidebar: preset section + system section with headroom 3-segment meter + monitor strip.
+- **Phase 5**: ✅ Complete — Analyzer and headroom: FFT spectrum, LUFS metering, smoothing/display-gain/freeze controls, 3-segment headroom meter with Set Safe button.
+- **Phase 6**: ⏳ Partial — Presets: basic ListBox panel exists but no band-data serialization, revert/reapply, import/export, file monitoring, or output-preset linking. AutoEq: functional dialog with curve preview drawing area. Preferences: functional dialog wired to settings persistence.
+- **Phase 7**: ✅ Complete — DSP/core math: biquad coefficients and constants match upstream for 9 selectable filter types; `total_response_db`, `format_frequency`, index maps, graph response helpers all implemented. Window state: monitor geometry fallback implemented.
+- **Phase 8**: ⏳ Pending — Testing (29 unit tests pass), Flatpak packaging, performance validation, GNOME Shell extension.
+
+### Current state (2026-09-19)
+- `cargo check --release` compiles with 0 warnings, 0 errors.
+- `cargo test --lib` passes: 36 tests, 0 failures.
+- ~7,200 lines of Rust across 32 modules.
+- Upstream reference fetched: `https://github.com/bhack/mini-eq.git` (tags v0.1.0–v0.8.8).
 
 ### Build instructions
 
@@ -254,6 +261,20 @@ cargo build --release
 cargo test --lib
 cargo run --release -- --background --auto-route
 ```
+
+### Upstream reference
+
+```bash
+git remote add upstream https://github.com/bhack/mini-eq.git 2>/dev/null || true
+git fetch upstream --depth 1
+git ls-tree --name-only -r upstream/main | head -80
+```
+
+### Current blockers
+
+- Backend unverified on live PipeWire: `pipewire_backend.rs` and `routing.rs` need runtime validation.
+- Preset lifecycle incomplete: no revert/reapply, import/export/delete, file monitoring, fallback presets, or output-preset linking.
+- No Flatpak manifest, no GNOME Shell extension, no CI workflow.
 
 ## CI Notes
 

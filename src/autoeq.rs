@@ -245,6 +245,7 @@ pub fn parse_apo_file(path: &Path) -> Result<(f64, Vec<EqBand>), String> {
             q: clamp(band.q, EQ_Q_MIN, EQ_Q_MAX),
             filter_type: FilterType::from_name(&band.filter_type).unwrap_or(FilterType::Off),
             enabled: true,
+            solo: false,
             coefficients: crate::core::BiquadCoefficients::identity(),
         })
         .collect();

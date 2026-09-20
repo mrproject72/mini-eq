@@ -1,16 +1,16 @@
 use std::sync::{Arc, Mutex};
 
 use log::{debug, info, warn};
-use pipewire::keys;
 use pipewire::{
-    Error, context::ContextRc, core::CoreRc, main_loop::MainLoopRc, node::Node,
-    properties::properties, types::ObjectType,
+    Error, context::ContextRc, core::CoreRc, link::Link, main_loop::MainLoopRc, node::Node,
+    properties::properties,
 };
 
 use crate::core::{
     BiquadCoefficients, EqBand, FILTER_OUTPUT_SUFFIX, FilterType, OUTPUT_CLIENT_NAME, SAMPLE_RATE,
     VIRTUAL_SINK_BASE, VIRTUAL_SINK_DESCRIPTION,
 };
+use crate::routing::{OutputRoute, RoutingEngine};
 
 pub struct PipeWireBackend {
     mainloop: MainLoopRc,
@@ -22,6 +22,7 @@ pub struct PipeWireBackend {
     bands: Vec<EqBand>,
     preamp_gain: f64,
     running: Arc<Mutex<bool>>,
+    routing: RoutingEngine,
 }
 
 impl PipeWireBackend {
@@ -36,6 +37,8 @@ impl PipeWireBackend {
 
         info!("Connected to PipeWire server");
 
+        let routing = RoutingEngine::new(core.clone());
+
         let backend = PipeWireBackend {
             mainloop,
             _context: context,
@@ -46,6 +49,7 @@ impl PipeWireBackend {
             bands,
             preamp_gain: 0.0,
             running: Arc::new(Mutex::new(true)),
+            routing,
         };
 
         backend.setup_registry_listener()?;
@@ -68,12 +72,12 @@ impl PipeWireBackend {
 
         let sink_name = format!("{}.source", VIRTUAL_SINK_BASE);
         let sink_props = properties! {
-            *keys::MEDIA_TYPE => "Audio",
-            *keys::MEDIA_CATEGORY => "Stream",
-            *keys::MEDIA_ROLE => "Music",
-            *keys::NODE_NAME => sink_name.as_str(),
-            *keys::NODE_DESCRIPTION => VIRTUAL_SINK_DESCRIPTION,
-            *keys::MEDIA_CLASS => "Audio/Sink",
+            *pipewire::keys::MEDIA_TYPE => "Audio",
+            *pipewire::keys::MEDIA_CATEGORY => "Stream",
+            *pipewire::keys::MEDIA_ROLE => "Music",
+            *pipewire::keys::NODE_NAME => sink_name.as_str(),
+            *pipewire::keys::NODE_DESCRIPTION => VIRTUAL_SINK_DESCRIPTION,
+            *pipewire::keys::MEDIA_CLASS => "Audio/Sink",
             "audio.channels" => "2",
             "audio.position" => "front-left,front-right",
             "node.latency" => "25000/48000",
@@ -93,8 +97,8 @@ impl PipeWireBackend {
         let chain_name = format!("{}_chain", VIRTUAL_SINK_BASE);
 
         let filter_props = properties! {
-            *keys::NODE_NAME => chain_name.as_str(),
-            *keys::NODE_DESCRIPTION => "Mini EQ Filter Chain",
+            *pipewire::keys::NODE_NAME => chain_name.as_str(),
+            *pipewire::keys::NODE_DESCRIPTION => "Mini EQ Filter Chain",
             "filter.chain" => "biquad",
             "audio.channels" => "2",
             "audio.rate" => SAMPLE_RATE.to_string().as_str(),
@@ -136,7 +140,7 @@ impl PipeWireBackend {
 
     fn configure_biquad_node(
         &self,
-        _filter_node: &Node,
+        filter_node: &Node,
         index: usize,
         band: &EqBand,
         coeffs: &BiquadCoefficients,
@@ -144,8 +148,8 @@ impl PipeWireBackend {
         let filter_name = format!("bq_{}_{}", band.filter_type.name().to_lowercase(), index);
 
         let mut props = properties! {
-            *keys::NODE_NAME => filter_name.as_str(),
-            *keys::NODE_DESCRIPTION => format!("EQ Band {} {}", index, band.filter_type.name()).as_str(),
+            *pipewire::keys::NODE_NAME => filter_name.as_str(),
+            *pipewire::keys::NODE_DESCRIPTION => format!("EQ Band {} {}", index, band.filter_type.name()).as_str(),
             "biquad.frequency" => band.frequency.to_string().as_str(),
             "biquad.gain" => band.gain_db.to_string().as_str(),
             "biquad.q" => band.q.to_string().as_str(),
@@ -164,6 +168,39 @@ impl PipeWireBackend {
             props.insert("biquad.enabled", "false");
         }
 
+        let properties: Vec<pipewire::spa::pod::Property> = props
+            .dict()
+            .iter()
+            .filter_map(|(key, value)| {
+                value
+                    .parse::<f64>()
+                    .ok()
+                    .map(|val| pipewire::spa::pod::Property {
+                        key: Self::string_key_to_id(key),
+                        flags: pipewire::spa::pod::PropertyFlags::empty(),
+                        value: pipewire::spa::pod::Value::Double(val),
+                    })
+            })
+            .collect();
+
+        let pod_value = pipewire::spa::pod::Value::Object(pipewire::spa::pod::Object {
+            type_: pipewire::spa::utils::SpaTypes::ObjectParamProps.as_raw(),
+            id: pipewire::spa::param::ParamType::Props.as_raw(),
+            properties,
+        });
+
+        let pod_bytes = pipewire::spa::pod::serialize::PodSerializer::serialize(
+            std::io::Cursor::new(Vec::new()),
+            &pod_value,
+        )
+        .map(|(cursor, _)| cursor.into_inner())
+        .unwrap_or_default();
+
+        let pod = pipewire::spa::pod::Pod::from_bytes(&pod_bytes)
+            .expect("Failed to create Pod from bytes");
+
+        filter_node.set_param(pipewire::spa::param::ParamType::Props, 0, pod);
+
         debug!(
             "Configured biquad filter {}: freq={} gain={} q={} type={}",
             index,
@@ -176,18 +213,26 @@ impl PipeWireBackend {
         Ok(())
     }
 
+    fn string_key_to_id(key: &str) -> u32 {
+        let mut hash: u32 = 0;
+        for byte in key.bytes() {
+            hash = hash.wrapping_mul(31).wrapping_add(byte as u32);
+        }
+        hash
+    }
+
     pub fn create_output_node(&mut self) -> Result<(), Error> {
         info!("Creating output node: {}", OUTPUT_CLIENT_NAME);
 
         let output_name = format!("{}{}", VIRTUAL_SINK_BASE, FILTER_OUTPUT_SUFFIX);
 
         let output_props = properties! {
-            *keys::MEDIA_TYPE => "Audio",
-            *keys::MEDIA_CATEGORY => "Stream",
-            *keys::MEDIA_ROLE => "Music",
-            *keys::NODE_NAME => output_name.as_str(),
-            *keys::NODE_DESCRIPTION => OUTPUT_CLIENT_NAME,
-            *keys::MEDIA_CLASS => "Audio/Sink",
+            *pipewire::keys::MEDIA_TYPE => "Audio",
+            *pipewire::keys::MEDIA_CATEGORY => "Stream",
+            *pipewire::keys::MEDIA_ROLE => "Music",
+            *pipewire::keys::NODE_NAME => output_name.as_str(),
+            *pipewire::keys::NODE_DESCRIPTION => OUTPUT_CLIENT_NAME,
+            *pipewire::keys::MEDIA_CLASS => "Audio/Sink",
             "audio.channels" => "2",
             "audio.rate" => SAMPLE_RATE.to_string().as_str(),
             "audio.format" => "f32le",
@@ -204,54 +249,113 @@ impl PipeWireBackend {
     pub fn link_nodes(&mut self) -> Result<(), Error> {
         info!("Linking PipeWire nodes");
 
-        if let (Some(_sink), Some(_filter), Some(_output)) = (
-            &self.virtual_sink_node,
-            &self.filter_chain_node,
-            &self.output_node,
-        ) {
-            info!("Linking: sink -> filter_chain -> output");
-        } else {
-            warn!("Not all nodes available for linking");
-        }
+        let sink_name = format!("{}.source", VIRTUAL_SINK_BASE);
+        let filter_name = format!("{}_chain", VIRTUAL_SINK_BASE);
+        let output_name = format!("{}{}", VIRTUAL_SINK_BASE, FILTER_OUTPUT_SUFFIX);
 
-        Ok(())
-    }
-
-    pub fn detect_output_routes(&self) -> Result<Vec<OutputRoute>, Error> {
-        info!("Detecting output routes");
-
-        let routes = Arc::new(Mutex::new(Vec::new()));
         let registry = self.core.get_registry()?;
+        let sink_id = Arc::new(Mutex::new(None));
+        let filter_id = Arc::new(Mutex::new(None));
+        let output_id = Arc::new(Mutex::new(None));
 
-        let routes_clone = routes.clone();
+        let sink_id_clone = sink_id.clone();
+        let filter_id_clone = filter_id.clone();
+        let output_id_clone = output_id.clone();
+
         let listener = registry.add_listener_local();
         let listener = listener.global(move |global| {
-            if global.type_ == ObjectType::Node
-                && let Some(props) = &global.props
-            {
-                let name = props.get("node.name").unwrap_or("unknown");
-                if name.contains("audio.sink") || name.contains("output") || name.contains("analog")
-                {
-                    let mut routes_guard = routes_clone.lock().unwrap();
-                    routes_guard.push(OutputRoute {
-                        id: global.id,
-                        name: name.to_string(),
-                        description: props.get("node.description").unwrap_or("").to_string(),
-                    });
-                    debug!("Found output route: {} (id={})", name, global.id);
-                }
+            if global.type_ != pipewire::types::ObjectType::Node {
+                return;
+            }
+            let props = match &global.props {
+                Some(p) => p,
+                None => return,
+            };
+            let name = match props.get("node.name") {
+                Some(n) => n,
+                None => return,
+            };
+
+            if name == sink_name {
+                *sink_id_clone.lock().unwrap() = Some(global.id);
+                debug!("Found virtual sink node: id={}", global.id);
+            } else if name == filter_name {
+                *filter_id_clone.lock().unwrap() = Some(global.id);
+                debug!("Found filter chain node: id={}", global.id);
+            } else if name == output_name {
+                *output_id_clone.lock().unwrap() = Some(global.id);
+                debug!("Found output node: id={}", global.id);
             }
         });
         let _listener = listener.register();
 
-        let result = routes.lock().unwrap().clone();
-        info!("Detected {} output routes", result.len());
-        Ok(result)
+        for _ in 0..50 {
+            if sink_id.lock().unwrap().is_some()
+                && filter_id.lock().unwrap().is_some()
+                && output_id.lock().unwrap().is_some()
+            {
+                break;
+            }
+            let _ = self
+                .mainloop
+                .loop_()
+                .iterate(pipewire::loop_::Timeout::Finite(
+                    std::time::Duration::from_millis(10),
+                ));
+        }
+
+        let sink_id = match sink_id.lock().unwrap().take() {
+            Some(id) => id,
+            None => {
+                warn!("Virtual sink node not found for linking");
+                return Ok(());
+            }
+        };
+        let filter_id = match filter_id.lock().unwrap().take() {
+            Some(id) => id,
+            None => {
+                warn!("Filter chain node not found for linking");
+                return Ok(());
+            }
+        };
+        let output_id = match output_id.lock().unwrap().take() {
+            Some(id) => id,
+            None => {
+                warn!("Output node not found for linking");
+                return Ok(());
+            }
+        };
+
+        let _ = self.core.create_object::<Link>(
+            "link-factory",
+            &properties! {
+                "link.output.port" => "0",
+                "link.input.port" => "0",
+                "link.output.node" => sink_id.to_string().as_str(),
+                "link.input.node" => filter_id.to_string().as_str(),
+            },
+        );
+
+        let _ = self.core.create_object::<Link>(
+            "link-factory",
+            &properties! {
+                "link.output.port" => "0",
+                "link.input.port" => "0",
+                "link.output.node" => filter_id.to_string().as_str(),
+                "link.input.node" => output_id.to_string().as_str(),
+            },
+        );
+
+        info!("Linked sink -> filter_chain -> output");
+        Ok(())
     }
 
-    pub fn auto_route_to_sink(&self, sink_name: &str) -> Result<(), Error> {
-        info!("Auto-routing to sink: {}", sink_name);
-        Ok(())
+    pub fn detect_output_routes(&self) -> Result<Vec<OutputRoute>, Error> {
+        self.routing.detect_routes()
+    }
+
+    pub fn auto_route_to_sink(&mut self, sink_name: &str) -> Result<(), Error> {
+        self.routing.auto_route_to_sink(sink_name)
     }
 
     pub fn update_band_coefficients(&mut self, bands: &[EqBand]) -> Result<(), Error> {
@@ -306,13 +410,6 @@ impl PipeWireBackend {
         self.mainloop.quit();
         info!("PipeWire main loop quit");
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct OutputRoute {
-    pub id: u32,
-    pub name: String,
-    pub description: String,
 }
 
 impl Default for PipeWireBackend {

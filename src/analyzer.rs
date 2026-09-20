@@ -508,7 +508,7 @@ mod tests {
 
     #[test]
     fn test_band_edges() {
-        let edges = analyzer_band_edges(&ANALYZER_BAND_FREQUENCIES.to_vec());
+        let edges = analyzer_band_edges(&ANALYZER_BAND_FREQUENCIES);
         assert_eq!(edges.len(), 31);
         assert!(edges.windows(2).all(|w| w[1] > w[0]));
     }

@@ -1,0 +1,25 @@
+app-id: io.github.bhack.mini-eq
+runtime: org.gnome.Platform
+runtime-version: '47'
+sdk: org.gnome.Sdk
+command: mini-eq
+tags:
+  - proprietary
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --device=dri
+  - --filesystem=xdg-config/mini-eq
+  - --filesystem=xdg-cache/mini-eq
+  - --talk-name=org.freedesktop.Flatpak
+  - --socket=pipewire
+  - --socket=pulseaudio
+
+modules:
+  - name: mini-eq
+    buildsystem: cargo
+    sources:
+      - type: dir
+        path: .
