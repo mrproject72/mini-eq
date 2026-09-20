@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use log::{debug, info, warn};
 use pipewire::{
     Error, context::ContextRc, core::CoreRc, link::Link, main_loop::MainLoopRc, node::Node,
-    properties::properties,
+    properties::properties, proxy::ProxyT,
 };
 
 use crate::core::{
@@ -249,82 +249,35 @@ impl PipeWireBackend {
     pub fn link_nodes(&mut self) -> Result<(), Error> {
         info!("Linking PipeWire nodes");
 
-        let sink_name = format!("{}.source", VIRTUAL_SINK_BASE);
-        let filter_name = format!("{}_chain", VIRTUAL_SINK_BASE);
-        let output_name = format!("{}{}", VIRTUAL_SINK_BASE, FILTER_OUTPUT_SUFFIX);
-
-        let registry = self.core.get_registry()?;
-        let sink_id = Arc::new(Mutex::new(None));
-        let filter_id = Arc::new(Mutex::new(None));
-        let output_id = Arc::new(Mutex::new(None));
-
-        let sink_id_clone = sink_id.clone();
-        let filter_id_clone = filter_id.clone();
-        let output_id_clone = output_id.clone();
-
-        let listener = registry.add_listener_local();
-        let listener = listener.global(move |global| {
-            if global.type_ != pipewire::types::ObjectType::Node {
-                return;
-            }
-            let props = match &global.props {
-                Some(p) => p,
-                None => return,
-            };
-            let name = match props.get("node.name") {
-                Some(n) => n,
-                None => return,
-            };
-
-            if name == sink_name {
-                *sink_id_clone.lock().unwrap() = Some(global.id);
-                debug!("Found virtual sink node: id={}", global.id);
-            } else if name == filter_name {
-                *filter_id_clone.lock().unwrap() = Some(global.id);
-                debug!("Found filter chain node: id={}", global.id);
-            } else if name == output_name {
-                *output_id_clone.lock().unwrap() = Some(global.id);
-                debug!("Found output node: id={}", global.id);
-            }
-        });
-        let _listener = listener.register();
-
-        for _ in 0..50 {
-            if sink_id.lock().unwrap().is_some()
-                && filter_id.lock().unwrap().is_some()
-                && output_id.lock().unwrap().is_some()
-            {
-                break;
-            }
-            let _ = self
-                .mainloop
-                .loop_()
-                .iterate(pipewire::loop_::Timeout::Finite(
-                    std::time::Duration::from_millis(10),
-                ));
-        }
-
-        let sink_id = match sink_id.lock().unwrap().take() {
-            Some(id) => id,
-            None => {
+        let sink_id = self
+            .virtual_sink_node
+            .as_ref()
+            .map(|n| n.upcast_ref().id())
+            .ok_or_else(|| {
                 warn!("Virtual sink node not found for linking");
-                return Ok(());
-            }
-        };
-        let filter_id = match filter_id.lock().unwrap().take() {
-            Some(id) => id,
-            None => {
+                Error::CreationFailed
+            })?;
+        let filter_id = self
+            .filter_chain_node
+            .as_ref()
+            .map(|n| n.upcast_ref().id())
+            .ok_or_else(|| {
                 warn!("Filter chain node not found for linking");
-                return Ok(());
-            }
-        };
-        let output_id = match output_id.lock().unwrap().take() {
-            Some(id) => id,
-            None => {
+                Error::CreationFailed
+            })?;
+        let output_id = self
+            .output_node
+            .as_ref()
+            .map(|n| n.upcast_ref().id())
+            .ok_or_else(|| {
                 warn!("Output node not found for linking");
-                return Ok(());
-            }
-        };
+                Error::CreationFailed
+            })?;
+
+        info!(
+            "Found nodes: sink={}, filter={}, output={}",
+            sink_id, filter_id, output_id
+        );
 
         let _ = self.core.create_object::<Link>(
             "link-factory",
