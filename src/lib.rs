@@ -1,3 +1,9 @@
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::if_same_then_else)]
+#![allow(clippy::collapsible_if)]
+#![allow(clippy::needless_range_loop)]
+#![allow(clippy::complexity)]
+
 pub mod analyzer;
 pub mod appearance;
 pub mod autoeq;
