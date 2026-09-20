@@ -40,18 +40,13 @@ impl AnalyzerPanel {
         drawing_area.set_hexpand(true);
 
         let smoothing_adj = gtk4::Adjustment::new(50.0, 15.0, 95.0, 1.0, 5.0, 0.0);
-        let smoothing_scale = gtk4::Scale::new(
-            gtk4::Orientation::Horizontal,
-            Some(&smoothing_adj),
-        );
+        let smoothing_scale = gtk4::Scale::new(gtk4::Orientation::Horizontal, Some(&smoothing_adj));
         smoothing_scale.set_hexpand(true);
         smoothing_scale.set_tooltip_text(Some("Smoothing"));
 
         let display_gain_adj = gtk4::Adjustment::new(0.0, -12.0, 32.0, 1.0, 4.0, 0.0);
-        let display_gain_scale = gtk4::Scale::new(
-            gtk4::Orientation::Horizontal,
-            Some(&display_gain_adj),
-        );
+        let display_gain_scale =
+            gtk4::Scale::new(gtk4::Orientation::Horizontal, Some(&display_gain_adj));
         display_gain_scale.set_hexpand(true);
         display_gain_scale.set_tooltip_text(Some("Display Gain"));
 

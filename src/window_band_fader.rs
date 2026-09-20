@@ -6,7 +6,7 @@ use std::rc::Rc;
 use gtk4::prelude::*;
 
 use crate::band_fader::EqBandFader;
-use crate::core::{FilterType, EQ_GAIN_MIN_DB, EQ_GAIN_MAX_DB};
+use crate::core::{EQ_GAIN_MAX_DB, EQ_GAIN_MIN_DB, FilterType};
 
 /// A single band fader (vertical slider only).
 pub struct WindowBandFader {

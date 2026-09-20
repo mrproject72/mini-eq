@@ -2,7 +2,10 @@
 
 use adw::prelude::*;
 
-use crate::background::{request_background_permission, request_start_at_login, save_background_mode, save_start_active_at_login, save_start_at_login};
+use crate::background::{
+    request_background_permission, request_start_at_login, save_background_mode,
+    save_start_active_at_login, save_start_at_login,
+};
 use crate::settings::{load_background_mode, load_start_active_at_login, load_start_at_login};
 
 /// Preferences dialog.
@@ -35,7 +38,8 @@ impl PreferencesDialog {
 
         let start_active_row = adw::SwitchRow::new();
         start_active_row.set_title("Enable System-wide EQ at Login");
-        start_active_row.set_subtitle("Route system audio through Mini EQ when it starts at login.");
+        start_active_row
+            .set_subtitle("Route system audio through Mini EQ when it starts at login.");
         start_active_row.set_active(load_start_active_at_login());
         start_active_row.set_sensitive(background_row.is_active() && start_row.is_active());
         group.add(&start_active_row);

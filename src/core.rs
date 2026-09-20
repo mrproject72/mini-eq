@@ -411,9 +411,7 @@ pub fn band_biquad_coefficients(
 }
 
 pub fn band_is_effective(band: &EqBand, solo_active: bool) -> bool {
-    band.enabled
-        && band.filter_type != FilterType::Off
-        && (!solo_active || band.solo)
+    band.enabled && band.filter_type != FilterType::Off && (!solo_active || band.solo)
 }
 
 impl FilterType {
@@ -501,7 +499,12 @@ pub fn biquad_response_at_frequency(
     }
 }
 
-pub fn total_response_db(bands: &[EqBand], preamp_db: f64, sample_rate: f64, frequency: f64) -> f64 {
+pub fn total_response_db(
+    bands: &[EqBand],
+    preamp_db: f64,
+    sample_rate: f64,
+    frequency: f64,
+) -> f64 {
     let mut response = Complex64::new(1.0, 0.0);
     let solo_active = bands.iter().any(|b| b.solo);
 
@@ -527,11 +530,7 @@ pub fn total_response_db_at_frequencies(
         .collect()
 }
 
-pub fn estimate_response_peak_db(
-    bands: &[EqBand],
-    preamp_db: f64,
-    sample_rate: f64,
-) -> f64 {
+pub fn estimate_response_peak_db(bands: &[EqBand], preamp_db: f64, sample_rate: f64) -> f64 {
     let frequencies = log_response_frequencies(sample_rate, RESPONSE_PEAK_F_STEP);
     let responses = total_response_db_at_frequencies(bands, preamp_db, sample_rate, &frequencies);
     responses
@@ -572,7 +571,10 @@ pub fn eq_band_to_dict(band: &EqBand) -> serde_json::Value {
 }
 
 pub fn eq_band_from_dict(data: &serde_json::Value, fallback: &EqBand) -> EqBand {
-    let filter_type_val = data.get("filter_type").and_then(|v| v.as_u64()).unwrap_or(fallback.filter_type as u64) as u8;
+    let filter_type_val = data
+        .get("filter_type")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(fallback.filter_type as u64) as u8;
     let filter_type = FilterType::from_name(match filter_type_val {
         0 => "Off",
         1 => "Bell",
@@ -587,16 +589,35 @@ pub fn eq_band_from_dict(data: &serde_json::Value, fallback: &EqBand) -> EqBand 
         10 => "Ladder-pass",
         11 => "Ladder-rej",
         _ => "Off",
-    }).unwrap_or(FilterType::Off);
+    })
+    .unwrap_or(FilterType::Off);
 
     EqBand {
         index: fallback.index,
-        frequency: data.get("frequency").and_then(|v| v.as_f64()).unwrap_or(fallback.frequency).clamp(EQ_FREQUENCY_MIN_HZ, EQ_FREQUENCY_MAX_HZ),
-        gain_db: data.get("gain_db").and_then(|v| v.as_f64()).unwrap_or(fallback.gain_db).clamp(EQ_GAIN_MIN_DB, EQ_GAIN_MAX_DB),
-        q: data.get("q").and_then(|v| v.as_f64()).unwrap_or(fallback.q).clamp(EQ_Q_MIN, EQ_Q_MAX),
+        frequency: data
+            .get("frequency")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(fallback.frequency)
+            .clamp(EQ_FREQUENCY_MIN_HZ, EQ_FREQUENCY_MAX_HZ),
+        gain_db: data
+            .get("gain_db")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(fallback.gain_db)
+            .clamp(EQ_GAIN_MIN_DB, EQ_GAIN_MAX_DB),
+        q: data
+            .get("q")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(fallback.q)
+            .clamp(EQ_Q_MIN, EQ_Q_MAX),
         filter_type,
-        enabled: data.get("enabled").and_then(|v| v.as_bool()).unwrap_or(fallback.enabled),
-        solo: data.get("solo").and_then(|v| v.as_bool()).unwrap_or(fallback.solo),
+        enabled: data
+            .get("enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(fallback.enabled),
+        solo: data
+            .get("solo")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(fallback.solo),
         coefficients: BiquadCoefficients::identity(),
     }
 }
@@ -611,7 +632,11 @@ pub fn preset_payload(bands: &[EqBand], preamp_db: f64) -> serde_json::Value {
 }
 
 pub fn preset_payload_bands(payload: &serde_json::Value) -> anyhow::Result<Vec<EqBand>> {
-    let bands_data = payload.get("bands").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let bands_data = payload
+        .get("bands")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
     let fallback = default_bands();
     let mut bands = fallback.clone();
     for (i, band_data) in bands_data.iter().take(MAX_BANDS).enumerate() {
@@ -644,8 +669,15 @@ pub fn load_preset_from_file(path: &Path) -> anyhow::Result<(f64, Vec<EqBand>)> 
         anyhow::bail!("unsupported preset version: {}", version);
     }
 
-    let preamp_db = payload.get("preamp_db").and_then(|v| v.as_f64()).unwrap_or(0.0);
-    let bands_data = payload.get("bands").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let preamp_db = payload
+        .get("preamp_db")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let bands_data = payload
+        .get("bands")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
 
     let fallback = default_bands();
     let mut bands = fallback.clone();
@@ -695,7 +727,8 @@ pub fn output_preset_links_path() -> std::path::PathBuf {
     app_config_file_path(OUTPUT_PRESET_LINKS_FILE)
 }
 
-pub fn load_output_preset_config() -> anyhow::Result<(std::collections::HashMap<String, String>, Option<String>)> {
+pub fn load_output_preset_config()
+-> anyhow::Result<(std::collections::HashMap<String, String>, Option<String>)> {
     let path = output_preset_links_path();
     if !path.exists() {
         return Ok((std::collections::HashMap::new(), None));
@@ -714,17 +747,25 @@ pub fn load_output_preset_config() -> anyhow::Result<(std::collections::HashMap<
             }
         }
     }
-    let default_preset = payload.get("default").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+    let default_preset = payload
+        .get("default")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
     Ok((links, default_preset.map(|s| s.to_string())))
 }
 
-pub fn write_output_preset_config(links: &std::collections::HashMap<String, String>, default_preset: Option<&str>) -> anyhow::Result<()> {
+pub fn write_output_preset_config(
+    links: &std::collections::HashMap<String, String>,
+    default_preset: Option<&str>,
+) -> anyhow::Result<()> {
     let mut obj = serde_json::json!({
         "version": OUTPUT_PRESET_LINKS_VERSION,
         "links": links,
     });
     if let Some(default) = default_preset {
-        obj.as_object_mut().unwrap().insert("default".to_string(), serde_json::json!(default));
+        obj.as_object_mut()
+            .unwrap()
+            .insert("default".to_string(), serde_json::json!(default));
     }
     let data = serde_json::to_string_pretty(&obj)?;
     std::fs::write(output_preset_links_path(), format!("{}\n", data))?;
@@ -879,7 +920,15 @@ mod tests {
         let payload = preset_payload(&bands, -3.0);
         let parsed = preset_payload_bands(&payload).unwrap();
         assert_eq!(parsed.len(), bands.len());
-        assert!((payload.get("preamp_db").and_then(|v| v.as_f64()).unwrap_or(0.0) - (-3.0)).abs() < 1e-12);
+        assert!(
+            (payload
+                .get("preamp_db")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0)
+                - (-3.0))
+                .abs()
+                < 1e-12
+        );
     }
 
     #[test]

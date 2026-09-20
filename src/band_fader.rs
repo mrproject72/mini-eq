@@ -145,12 +145,11 @@ impl EqBandFader {
                 }
                 let state = gesture.current_event_state();
                 let multiplier = interaction_multiplier_for_state(state);
-                let (_track_top, track_bottom) = track_bounds(f.drawing_area.allocated_height() as f64);
+                let (_track_top, track_bottom) =
+                    track_bounds(f.drawing_area.allocated_height() as f64);
                 let usable_height = (track_bottom - 56.0).max(1.0);
                 let gain = f.drag_start_gain_db
-                    - (offset_y / usable_height)
-                        * (EQ_GAIN_MAX_DB - EQ_GAIN_MIN_DB)
-                        * multiplier;
+                    - (offset_y / usable_height) * (EQ_GAIN_MAX_DB - EQ_GAIN_MIN_DB) * multiplier;
                 let gain = (gain.clamp(EQ_GAIN_MIN_DB, EQ_GAIN_MAX_DB) * 10.0).round() / 10.0;
                 if gain != f.gain_db {
                     f.gain_db = gain;
@@ -265,9 +264,7 @@ impl EqBandFader {
                 }
 
                 match key {
-                    gtk4::gdk::Key::_0
-                    | gtk4::gdk::Key::KP_0
-                    | gtk4::gdk::Key::Home => {
+                    gtk4::gdk::Key::_0 | gtk4::gdk::Key::KP_0 | gtk4::gdk::Key::Home => {
                         f.selected = true;
                         if f.gain_db != 0.0 {
                             f.gain_db = 0.0;
@@ -277,9 +274,7 @@ impl EqBandFader {
                             f.drawing_area.queue_draw();
                         }
                     }
-                    gtk4::gdk::Key::Return
-                    | gtk4::gdk::Key::KP_Enter
-                    | gtk4::gdk::Key::space => {
+                    gtk4::gdk::Key::Return | gtk4::gdk::Key::KP_Enter | gtk4::gdk::Key::space => {
                         f.selected = !f.selected;
                     }
                     _ => return glib::Propagation::Proceed,
@@ -416,8 +411,16 @@ fn draw_text(
 ) {
     ctx.select_font_face(
         "Sans",
-        if bold { FontSlant::Normal } else { FontSlant::Normal },
-        if bold { FontWeight::Bold } else { FontWeight::Normal },
+        if bold {
+            FontSlant::Normal
+        } else {
+            FontSlant::Normal
+        },
+        if bold {
+            FontWeight::Bold
+        } else {
+            FontWeight::Normal
+        },
     );
     ctx.set_font_size(size);
     let extents = ctx.text_extents(text).unwrap();
@@ -446,7 +449,16 @@ fn draw_state_badge(
     ctx.set_source_rgba(color.0, color.1, color.2, 0.50 * alpha);
     ctx.set_line_width(1.0);
     let _ = ctx.stroke();
-    draw_text(ctx, label, x + (width / 2.0), y + 10.7, 7.8, (0.94, 0.97, 1.0), true, true);
+    draw_text(
+        ctx,
+        label,
+        x + (width / 2.0),
+        y + 10.7,
+        7.8,
+        (0.94, 0.97, 1.0),
+        true,
+        true,
+    );
 }
 
 pub fn filter_type_short_label(ft: FilterType) -> &'static str {
@@ -527,18 +539,9 @@ fn draw_fader(ctx: &Context, width: i32, height: i32, fader: &EqBandFader) {
             (0.90, 0.94, 0.98),
             (0.62, 0.68, 0.74),
             (0.02, 0.03, 0.045, 0.42),
-            (
-                (0.20, 0.26, 0.34, 0.82),
-                (0.10, 0.14, 0.20, 0.82),
-            ),
-            (
-                (0.56, 0.69, 0.81, 0.56),
-                (0.38, 0.51, 0.64, 0.56),
-            ),
-            (
-                (0.58, 0.68, 0.78, 0.52),
-                (0.38, 0.48, 0.60, 0.52),
-            ),
+            ((0.20, 0.26, 0.34, 0.82), (0.10, 0.14, 0.20, 0.82)),
+            ((0.56, 0.69, 0.81, 0.56), (0.38, 0.51, 0.64, 0.56)),
+            ((0.58, 0.68, 0.78, 0.52), (0.38, 0.48, 0.60, 0.52)),
             (0.82, 0.88, 0.94),
             DARK_TICK_ZERO_ALPHA,
             DARK_TICK_MINOR_ALPHA,
@@ -562,18 +565,9 @@ fn draw_fader(ctx: &Context, width: i32, height: i32, fader: &EqBandFader) {
             (0.20, 0.27, 0.34),
             (0.58, 0.63, 0.68),
             (0.0, 0.0, 0.0, 0.20),
-            (
-                (0.54, 0.64, 0.74, 0.94),
-                (0.32, 0.43, 0.55, 0.94),
-            ),
-            (
-                (0.16, 0.45, 0.72, 0.84),
-                (0.08, 0.30, 0.50, 0.84),
-            ),
-            (
-                (0.24, 0.43, 0.60, 0.76),
-                (0.14, 0.28, 0.44, 0.76),
-            ),
+            ((0.54, 0.64, 0.74, 0.94), (0.32, 0.43, 0.55, 0.94)),
+            ((0.16, 0.45, 0.72, 0.84), (0.08, 0.30, 0.50, 0.84)),
+            ((0.24, 0.43, 0.60, 0.76), (0.14, 0.28, 0.44, 0.76)),
             (0.13, 0.19, 0.26),
             LIGHT_TICK_ZERO_ALPHA,
             LIGHT_TICK_MINOR_ALPHA,
@@ -592,9 +586,19 @@ fn draw_fader(ctx: &Context, width: i32, height: i32, fader: &EqBandFader) {
     if engaged {
         rounded_rectangle(ctx, 2.0, 2.0, width_f - 4.0, height_f - 4.0, 15.0);
         if fader.selected {
-            ctx.set_source_rgba(engaged_fill_rgb.0, engaged_fill_rgb.1, engaged_fill_rgb.2, selected_fill_alpha * alpha);
+            ctx.set_source_rgba(
+                engaged_fill_rgb.0,
+                engaged_fill_rgb.1,
+                engaged_fill_rgb.2,
+                selected_fill_alpha * alpha,
+            );
         } else {
-            ctx.set_source_rgba(engaged_fill_rgb.0, engaged_fill_rgb.1, engaged_fill_rgb.2, hover_fill_alpha * alpha);
+            ctx.set_source_rgba(
+                engaged_fill_rgb.0,
+                engaged_fill_rgb.1,
+                engaged_fill_rgb.2,
+                hover_fill_alpha * alpha,
+            );
         }
         let _ = ctx.fill_preserve();
         let mut border_alpha: f64 = if fader.selected { 0.30 } else { 0.15 };
@@ -602,7 +606,12 @@ fn draw_fader(ctx: &Context, width: i32, height: i32, fader: &EqBandFader) {
             border_alpha = border_alpha.max(0.34);
         }
         if fader.selected {
-            ctx.set_source_rgba(FOCUS_BLUE.0, FOCUS_BLUE.1, FOCUS_BLUE.2, border_alpha * alpha);
+            ctx.set_source_rgba(
+                FOCUS_BLUE.0,
+                FOCUS_BLUE.1,
+                FOCUS_BLUE.2,
+                border_alpha * alpha,
+            );
         } else {
             ctx.set_source_rgba(0.82, 0.88, 0.94, border_alpha * alpha);
         }
@@ -610,24 +619,63 @@ fn draw_fader(ctx: &Context, width: i32, height: i32, fader: &EqBandFader) {
         let _ = ctx.stroke();
     }
 
-    draw_text(ctx, &(fader.index + 1).to_string(), center_x, 15.0, 10.0, text_main, true, true);
+    draw_text(
+        ctx,
+        &(fader.index + 1).to_string(),
+        center_x,
+        15.0,
+        10.0,
+        text_main,
+        true,
+        true,
+    );
 
     let type_color = if fader.selected {
         text_type_selected
     } else {
         text_type
     };
-    let type_color = if !fader.active { text_disabled } else { type_color };
+    let type_color = if !fader.active {
+        text_disabled
+    } else {
+        type_color
+    };
     let filter_text = filter_type_short_label(fader.filter_type);
-    draw_text(ctx, filter_text, center_x, 29.5, 9.0, type_color, true, true);
+    draw_text(
+        ctx,
+        filter_text,
+        center_x,
+        29.5,
+        9.0,
+        type_color,
+        true,
+        true,
+    );
 
     let gain_label = format!("{:+.1} dB", fader.gain_db);
     let gain_width = 60.0;
-    rounded_rectangle(ctx, center_x - gain_width / 2.0, 35.0, gain_width, 18.0, 8.0);
+    rounded_rectangle(
+        ctx,
+        center_x - gain_width / 2.0,
+        35.0,
+        gain_width,
+        18.0,
+        8.0,
+    );
     if fader.selected {
-        ctx.set_source_rgba(engaged_fill_rgb.0, engaged_fill_rgb.1, engaged_fill_rgb.2, 0.08 * alpha);
+        ctx.set_source_rgba(
+            engaged_fill_rgb.0,
+            engaged_fill_rgb.1,
+            engaged_fill_rgb.2,
+            0.08 * alpha,
+        );
     } else {
-        ctx.set_source_rgba(engaged_fill_rgb.0, engaged_fill_rgb.1, engaged_fill_rgb.2, 0.07 * alpha);
+        ctx.set_source_rgba(
+            engaged_fill_rgb.0,
+            engaged_fill_rgb.1,
+            engaged_fill_rgb.2,
+            0.07 * alpha,
+        );
     }
     let _ = ctx.fill();
     let gain_color = if fader.selected {
@@ -635,8 +683,21 @@ fn draw_fader(ctx: &Context, width: i32, height: i32, fader: &EqBandFader) {
     } else {
         gain_color_normal
     };
-    let gain_color = if !fader.active { gain_color_disabled } else { gain_color };
-    draw_text(ctx, &gain_label, center_x, 48.1, 9.3, gain_color, true, true);
+    let gain_color = if !fader.active {
+        gain_color_disabled
+    } else {
+        gain_color
+    };
+    draw_text(
+        ctx,
+        &gain_label,
+        center_x,
+        48.1,
+        9.3,
+        gain_color,
+        true,
+        true,
+    );
 
     let (track_top, track_bottom) = track_bounds(height_f);
     let track_x = center_x - 3.5;
@@ -644,36 +705,108 @@ fn draw_fader(ctx: &Context, width: i32, height: i32, fader: &EqBandFader) {
     let gain_range = EQ_GAIN_MAX_DB - EQ_GAIN_MIN_DB;
     let normalized = (fader.gain_db - EQ_GAIN_MIN_DB) / gain_range;
     let knob_y = track_bottom - ((track_bottom - track_top) * normalized.clamp(0.0, 1.0));
-    let zero_y = track_bottom - ((track_bottom - track_top) * ((0.0 - EQ_GAIN_MIN_DB) / gain_range));
+    let zero_y =
+        track_bottom - ((track_bottom - track_top) * ((0.0 - EQ_GAIN_MIN_DB) / gain_range));
 
-    rounded_rectangle(ctx, track_x - 2.0, track_top - 1.0, track_width + 4.0, track_bottom - track_top + 2.0, 6.0);
-    ctx.set_source_rgba(track_shadow.0, track_shadow.1, track_shadow.2, track_shadow.3 * alpha);
+    rounded_rectangle(
+        ctx,
+        track_x - 2.0,
+        track_top - 1.0,
+        track_width + 4.0,
+        track_bottom - track_top + 2.0,
+        6.0,
+    );
+    ctx.set_source_rgba(
+        track_shadow.0,
+        track_shadow.1,
+        track_shadow.2,
+        track_shadow.3 * alpha,
+    );
     let _ = ctx.fill();
 
     {
         let track_grad = LinearGradient::new(0.0, track_top, 0.0, track_bottom);
-        track_grad.add_color_stop_rgba(0.0, track_gradient_colors.0 .0, track_gradient_colors.0 .1, track_gradient_colors.0 .2, track_gradient_colors.0 .3 * alpha);
-        track_grad.add_color_stop_rgba(1.0, track_gradient_colors.1 .0, track_gradient_colors.1 .1, track_gradient_colors.1 .2, track_gradient_colors.1 .3 * alpha);
+        track_grad.add_color_stop_rgba(
+            0.0,
+            track_gradient_colors.0.0,
+            track_gradient_colors.0.1,
+            track_gradient_colors.0.2,
+            track_gradient_colors.0.3 * alpha,
+        );
+        track_grad.add_color_stop_rgba(
+            1.0,
+            track_gradient_colors.1.0,
+            track_gradient_colors.1.1,
+            track_gradient_colors.1.2,
+            track_gradient_colors.1.3 * alpha,
+        );
         let _ = ctx.set_source(&track_grad);
     }
-    rounded_rectangle(ctx, track_x, track_top, track_width, track_bottom - track_top, 3.5);
+    rounded_rectangle(
+        ctx,
+        track_x,
+        track_top,
+        track_width,
+        track_bottom - track_top,
+        3.5,
+    );
     let _ = ctx.fill_preserve();
-    ctx.set_source_rgba(track_shadow.0, track_shadow.1, track_shadow.2, track_shadow.3 * alpha);
+    ctx.set_source_rgba(
+        track_shadow.0,
+        track_shadow.1,
+        track_shadow.2,
+        track_shadow.3 * alpha,
+    );
     ctx.set_line_width(1.0);
     let _ = ctx.stroke();
 
     let fill_top = knob_y.min(zero_y);
     let fill_bottom = knob_y.max(zero_y);
-    let fill_bottom = if fill_bottom - fill_top < 2.0 { fill_top + 2.0 } else { fill_bottom };
-    rounded_rectangle(ctx, track_x, fill_top, track_width, fill_bottom - fill_top, 4.0);
+    let fill_bottom = if fill_bottom - fill_top < 2.0 {
+        fill_top + 2.0
+    } else {
+        fill_bottom
+    };
+    rounded_rectangle(
+        ctx,
+        track_x,
+        fill_top,
+        track_width,
+        fill_bottom - fill_top,
+        4.0,
+    );
     {
         let fill_grad = LinearGradient::new(0.0, fill_top, 0.0, fill_bottom);
         if fader.selected || fader.dragging_gain {
-            fill_grad.add_color_stop_rgba(0.0, selected_fill_gradient_colors.0 .0, selected_fill_gradient_colors.0 .1, selected_fill_gradient_colors.0 .2, selected_fill_gradient_colors.0 .3 * alpha);
-            fill_grad.add_color_stop_rgba(1.0, selected_fill_gradient_colors.1 .0, selected_fill_gradient_colors.1 .1, selected_fill_gradient_colors.1 .2, selected_fill_gradient_colors.1 .3 * alpha);
+            fill_grad.add_color_stop_rgba(
+                0.0,
+                selected_fill_gradient_colors.0.0,
+                selected_fill_gradient_colors.0.1,
+                selected_fill_gradient_colors.0.2,
+                selected_fill_gradient_colors.0.3 * alpha,
+            );
+            fill_grad.add_color_stop_rgba(
+                1.0,
+                selected_fill_gradient_colors.1.0,
+                selected_fill_gradient_colors.1.1,
+                selected_fill_gradient_colors.1.2,
+                selected_fill_gradient_colors.1.3 * alpha,
+            );
         } else {
-            fill_grad.add_color_stop_rgba(0.0, fill_gradient_colors.0 .0, fill_gradient_colors.0 .1, fill_gradient_colors.0 .2, fill_gradient_colors.0 .3 * alpha);
-            fill_grad.add_color_stop_rgba(1.0, fill_gradient_colors.1 .0, fill_gradient_colors.1 .1, fill_gradient_colors.1 .2, fill_gradient_colors.1 .3 * alpha);
+            fill_grad.add_color_stop_rgba(
+                0.0,
+                fill_gradient_colors.0.0,
+                fill_gradient_colors.0.1,
+                fill_gradient_colors.0.2,
+                fill_gradient_colors.0.3 * alpha,
+            );
+            fill_grad.add_color_stop_rgba(
+                1.0,
+                fill_gradient_colors.1.0,
+                fill_gradient_colors.1.1,
+                fill_gradient_colors.1.2,
+                fill_gradient_colors.1.3 * alpha,
+            );
         }
         let _ = ctx.set_source(&fill_grad);
     }
@@ -683,12 +816,25 @@ fn draw_fader(ctx: &Context, width: i32, height: i32, fader: &EqBandFader) {
 
     for tick_gain in TICK_GAINS.iter().copied() {
         let is_zero_tick = tick_gain == TICK_ZERO_GAIN;
-        let tick_y = track_bottom - ((track_bottom - track_top) * ((tick_gain - EQ_GAIN_MIN_DB) / gain_range));
-        let tick_alpha = if is_zero_tick { tick_zero_alpha } else { tick_minor_alpha };
+        let tick_y = track_bottom
+            - ((track_bottom - track_top) * ((tick_gain - EQ_GAIN_MIN_DB) / gain_range));
+        let tick_alpha = if is_zero_tick {
+            tick_zero_alpha
+        } else {
+            tick_minor_alpha
+        };
         ctx.set_source_rgba(tick_color.0, tick_color.1, tick_color.2, tick_alpha * alpha);
-        ctx.set_line_width(if is_zero_tick { TICK_ZERO_LINE_WIDTH } else { TICK_MINOR_LINE_WIDTH });
+        ctx.set_line_width(if is_zero_tick {
+            TICK_ZERO_LINE_WIDTH
+        } else {
+            TICK_MINOR_LINE_WIDTH
+        });
         ctx.move_to(center_x + TICK_INNER_OFFSET_PX, tick_y);
-        let outer_offset = if is_zero_tick { TICK_ZERO_OUTER_OFFSET_PX } else { TICK_MINOR_OUTER_OFFSET_PX };
+        let outer_offset = if is_zero_tick {
+            TICK_ZERO_OUTER_OFFSET_PX
+        } else {
+            TICK_MINOR_OUTER_OFFSET_PX
+        };
         ctx.line_to(center_x + outer_offset, tick_y);
         let _ = ctx.stroke();
         if is_zero_tick {
@@ -698,48 +844,138 @@ fn draw_fader(ctx: &Context, width: i32, height: i32, fader: &EqBandFader) {
         }
     }
 
-    let knob_width = if fader.selected || fader.dragging_gain { 26.0 } else { 24.0 };
+    let knob_width = if fader.selected || fader.dragging_gain {
+        26.0
+    } else {
+        24.0
+    };
     let knob_height = 16.0;
     let knob_x = center_x - (knob_width / 2.0);
     let knob_y_top = knob_y - (knob_height / 2.0);
 
-    rounded_rectangle(ctx, knob_x + 1.0, knob_y_top + 2.0, knob_width, knob_height, 5.0);
-    ctx.set_source_rgba(knob_shadow.0, knob_shadow.1, knob_shadow.2, knob_shadow.3 * alpha);
+    rounded_rectangle(
+        ctx,
+        knob_x + 1.0,
+        knob_y_top + 2.0,
+        knob_width,
+        knob_height,
+        5.0,
+    );
+    ctx.set_source_rgba(
+        knob_shadow.0,
+        knob_shadow.1,
+        knob_shadow.2,
+        knob_shadow.3 * alpha,
+    );
     let _ = ctx.fill();
 
     rounded_rectangle(ctx, knob_x, knob_y_top, knob_width, knob_height, 5.0);
     if fader.selected || fader.dragging_gain {
-        ctx.set_source_rgba(knob_selected.0, knob_selected.1, knob_selected.2, 0.98 * alpha);
+        ctx.set_source_rgba(
+            knob_selected.0,
+            knob_selected.1,
+            knob_selected.2,
+            0.98 * alpha,
+        );
     } else {
         ctx.set_source_rgba(knob_normal.0, knob_normal.1, knob_normal.2, 0.98 * alpha);
     }
     let _ = ctx.fill_preserve();
-    ctx.set_source_rgba(knob_border.0, knob_border.1, knob_border.2, knob_border.3 * alpha);
+    ctx.set_source_rgba(
+        knob_border.0,
+        knob_border.1,
+        knob_border.2,
+        knob_border.3 * alpha,
+    );
     ctx.set_line_width(1.0);
     let _ = ctx.stroke();
-    ctx.set_source_rgba(knob_highlight.0, knob_highlight.1, knob_highlight.2, knob_highlight.3 * alpha);
+    ctx.set_source_rgba(
+        knob_highlight.0,
+        knob_highlight.1,
+        knob_highlight.2,
+        knob_highlight.3 * alpha,
+    );
     ctx.set_line_width(1.0);
     ctx.move_to(center_x - 7.0, knob_y);
     ctx.line_to(center_x + 7.0, knob_y);
     let _ = ctx.stroke();
 
-    let overview_freq_color = if fader.active { overview_freq } else { overview_freq_disabled };
-    if height_f >= 170.0 {
-        let q_color = if fader.active { q_text } else { q_text_disabled };
-        draw_text(ctx, &fader.frequency_label, center_x, height_f - 25.0, 9.0, overview_freq_color, false, true);
-        draw_text(ctx, &fader.q_label, center_x, height_f - 11.0, 8.6, q_color, false, true);
+    let overview_freq_color = if fader.active {
+        overview_freq
     } else {
-        draw_text(ctx, &fader.frequency_label, center_x, height_f - 13.0, 9.0, overview_freq_color, false, true);
+        overview_freq_disabled
+    };
+    if height_f >= 170.0 {
+        let q_color = if fader.active {
+            q_text
+        } else {
+            q_text_disabled
+        };
+        draw_text(
+            ctx,
+            &fader.frequency_label,
+            center_x,
+            height_f - 25.0,
+            9.0,
+            overview_freq_color,
+            false,
+            true,
+        );
+        draw_text(
+            ctx,
+            &fader.q_label,
+            center_x,
+            height_f - 11.0,
+            8.6,
+            q_color,
+            false,
+            true,
+        );
+    } else {
+        draw_text(
+            ctx,
+            &fader.frequency_label,
+            center_x,
+            height_f - 13.0,
+            9.0,
+            overview_freq_color,
+            false,
+            true,
+        );
     }
 
     let badge_y = 52.0;
     let badge_right = width_f - 8.0;
     if fader.muted && fader.soloed {
         let badge_width = 24.0;
-        draw_state_badge(ctx, "M/S", badge_right - badge_width, badge_y, badge_width, (0.78, 0.65, 0.98), alpha);
+        draw_state_badge(
+            ctx,
+            "M/S",
+            badge_right - badge_width,
+            badge_y,
+            badge_width,
+            (0.78, 0.65, 0.98),
+            alpha,
+        );
     } else if fader.muted {
-        draw_state_badge(ctx, "M", badge_right - 14.0, badge_y, 14.0, (0.94, 0.44, 0.44), alpha);
+        draw_state_badge(
+            ctx,
+            "M",
+            badge_right - 14.0,
+            badge_y,
+            14.0,
+            (0.94, 0.44, 0.44),
+            alpha,
+        );
     } else if fader.soloed {
-        draw_state_badge(ctx, "S", badge_right - 14.0, badge_y, 14.0, FOCUS_BLUE, alpha);
+        draw_state_badge(
+            ctx,
+            "S",
+            badge_right - 14.0,
+            badge_y,
+            14.0,
+            FOCUS_BLUE,
+            alpha,
+        );
     }
 }

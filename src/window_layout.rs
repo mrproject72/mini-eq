@@ -21,7 +21,12 @@ fn band_frequency(index: usize) -> f64 {
 }
 
 /// Build the band fader row layout.
-pub fn build_band_faders(visible_bands: usize) -> (gtk4::ScrolledWindow, Vec<Rc<RefCell<crate::band_fader::EqBandFader>>>) {
+pub fn build_band_faders(
+    visible_bands: usize,
+) -> (
+    gtk4::ScrolledWindow,
+    Vec<Rc<RefCell<crate::band_fader::EqBandFader>>>,
+) {
     let scrolled = gtk4::ScrolledWindow::new();
     scrolled.set_hexpand(true);
     scrolled.set_vexpand(true);

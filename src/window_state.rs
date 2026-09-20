@@ -23,6 +23,7 @@ pub fn initial_window_default_size() -> (i32, i32) {
 }
 
 pub fn bind_window_state(window: &impl IsA<gtk4::Window>) {
+    let window = window.as_ref();
     let settings = crate::appearance::AppearanceSettings::load();
     if let Some(width) = settings.window_width {
         window.set_default_width(width);
@@ -30,4 +31,18 @@ pub fn bind_window_state(window: &impl IsA<gtk4::Window>) {
     if let Some(height) = settings.window_height {
         window.set_default_height(height);
     }
+
+    let _ = window.connect_notify(Some("default-width"), move |win, _| {
+        let width = win.default_width();
+        let mut settings = crate::appearance::AppearanceSettings::load();
+        settings.window_width = Some(width);
+        settings.save();
+    });
+
+    let _ = window.connect_notify(Some("default-height"), move |win, _| {
+        let height = win.default_height();
+        let mut settings = crate::appearance::AppearanceSettings::load();
+        settings.window_height = Some(height);
+        settings.save();
+    });
 }

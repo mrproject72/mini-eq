@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use crate::analyzer::analyzer_level_to_display_norm;
-use crate::core::{sanitize_preset_name, APP_ID};
+use crate::core::{APP_ID, sanitize_preset_name};
 use crate::window_presets::list_preset_names;
 
 // ── Constants ────────────────────────────────────────────────────────

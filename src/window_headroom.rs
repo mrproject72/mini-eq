@@ -90,7 +90,13 @@ impl HeadroomPanel {
         let meter_state = state.clone();
         let meter_peak = peak_value.clone();
         meter_area.set_draw_func(move |_area, ctx, width, height| {
-            Self::draw_meter(ctx, width, height, *meter_state.borrow(), *meter_peak.borrow());
+            Self::draw_meter(
+                ctx,
+                width,
+                height,
+                *meter_state.borrow(),
+                *meter_peak.borrow(),
+            );
         });
 
         Self {
@@ -114,9 +120,11 @@ impl HeadroomPanel {
             HeadroomState::Risk => "Risk",
             HeadroomState::Bypass => "Bypass",
         });
-        self.state_label.set_css_classes(&["headroom-state-label", state.css_class()]);
+        self.state_label
+            .set_css_classes(&["headroom-state-label", state.css_class()]);
         self.container.set_css_classes(&[state.css_class()]);
-        self.set_safe_button.set_visible(state == HeadroomState::Risk);
+        self.set_safe_button
+            .set_visible(state == HeadroomState::Risk);
         self.meter_area.queue_draw();
     }
 
@@ -172,11 +180,7 @@ impl HeadroomPanel {
             ((peak_db + 60.0) / 60.0).clamp(0.0, 1.0)
         };
 
-        let colors = [
-            (0.2, 0.8, 0.2),
-            (0.9, 0.7, 0.1),
-            (0.95, 0.2, 0.2),
-        ];
+        let colors = [(0.2, 0.8, 0.2), (0.9, 0.7, 0.1), (0.95, 0.2, 0.2)];
 
         for i in 0..3 {
             let x = i as f64 * segment_w;

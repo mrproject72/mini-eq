@@ -7,8 +7,11 @@ use std::rc::Rc;
 use gtk4::cairo::Context;
 use gtk4::prelude::*;
 
-use crate::autoeq::{download_autoeq_preset, parse_apo_file, search_autoeq_entries, AutoEqEntry};
-use crate::core::{EQ_FREQUENCY_MAX_HZ, EQ_FREQUENCY_MIN_HZ, EQ_GAIN_MAX_DB, EQ_GAIN_MIN_DB, SAMPLE_RATE, total_response_db_at_frequencies};
+use crate::autoeq::{AutoEqEntry, download_autoeq_preset, parse_apo_file, search_autoeq_entries};
+use crate::core::{
+    EQ_FREQUENCY_MAX_HZ, EQ_FREQUENCY_MIN_HZ, EQ_GAIN_MAX_DB, EQ_GAIN_MIN_DB, SAMPLE_RATE,
+    total_response_db_at_frequencies,
+};
 
 /// AutoEq import dialog.
 pub struct AutoEqDialog {
@@ -94,7 +97,11 @@ impl AutoEqDialog {
             }
 
             if results.is_empty() {
-                let text = if query.is_empty() { "Enter a search query" } else { "No results found" };
+                let text = if query.is_empty() {
+                    "Enter a search query"
+                } else {
+                    "No results found"
+                };
                 status_for_search.set_text(text);
                 *preview_bands_for_search.borrow_mut() = Vec::new();
                 *preview_preamp_for_search.borrow_mut() = 0.0;
@@ -129,7 +136,10 @@ impl AutoEqDialog {
                         while let Some(child) = results_list_for_refresh.first_child() {
                             results_list_for_refresh.remove(&child);
                         }
-                        status_for_refresh.set_text(&format!("Loaded {} profiles", entries_for_refresh.borrow().len()));
+                        status_for_refresh.set_text(&format!(
+                            "Loaded {} profiles",
+                            entries_for_refresh.borrow().len()
+                        ));
                     }
                     Err(e) => {
                         status_for_refresh.set_text(&format!("Error: {}", e));
@@ -159,10 +169,15 @@ impl AutoEqDialog {
                             let preview_area = preview_area_for_select.clone();
                             let status = status_for_select.clone();
                             glib::MainContext::default().spawn_local(async move {
-                                match download_autoeq_preset(&entry, &cache_dir, SAMPLE_RATE).await {
+                                match download_autoeq_preset(&entry, &cache_dir, SAMPLE_RATE).await
+                                {
                                     Ok(preset) => match parse_apo_file(&preset.path) {
                                         Ok((preamp, bands)) => {
-                                            status.set_text(&format!("{} — {} bands", entry.name, bands.len()));
+                                            status.set_text(&format!(
+                                                "{} — {} bands",
+                                                entry.name,
+                                                bands.len()
+                                            ));
                                             *preview_bands.borrow_mut() = bands;
                                             *preview_preamp.borrow_mut() = preamp;
                                             preview_area.queue_draw();
@@ -234,7 +249,13 @@ impl AutoEqDialog {
     }
 }
 
-fn draw_autoeq_preview(ctx: &Context, width: i32, height: i32, preamp_db: f64, bands: &[crate::core::EqBand]) {
+fn draw_autoeq_preview(
+    ctx: &Context,
+    width: i32,
+    height: i32,
+    preamp_db: f64,
+    bands: &[crate::core::EqBand],
+) {
     let width = width as f64;
     let height = height as f64;
 

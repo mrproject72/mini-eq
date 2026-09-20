@@ -146,7 +146,8 @@ impl UtilityPane {
         let smoothing_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
         let smoothing_label = gtk4::Label::new(Some("Smoothing"));
         smoothing_row.append(&smoothing_label);
-        let smoothing_scale = gtk4::Scale::with_range(gtk4::Orientation::Horizontal, 15.0, 95.0, 1.0);
+        let smoothing_scale =
+            gtk4::Scale::with_range(gtk4::Orientation::Horizontal, 15.0, 95.0, 1.0);
         smoothing_scale.set_size_request(116, -1);
         smoothing_scale.set_hexpand(true);
         smoothing_row.append(&smoothing_scale);
@@ -155,7 +156,8 @@ impl UtilityPane {
         let display_gain_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
         let display_gain_label = gtk4::Label::new(Some("Display Gain"));
         display_gain_row.append(&display_gain_label);
-        let display_gain_scale = gtk4::Scale::with_range(gtk4::Orientation::Horizontal, -12.0, 32.0, 1.0);
+        let display_gain_scale =
+            gtk4::Scale::with_range(gtk4::Orientation::Horizontal, -12.0, 32.0, 1.0);
         display_gain_scale.set_size_request(116, -1);
         display_gain_scale.set_hexpand(true);
         display_gain_row.append(&display_gain_scale);

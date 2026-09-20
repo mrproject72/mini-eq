@@ -8,8 +8,8 @@ use gtk4::prelude::*;
 
 use crate::autoeq::parse_apo_file;
 use crate::core::{
-    default_bands, ensure_preset_storage_dir, format_frequency, load_preset_from_file, PRESET_FILE_SUFFIX,
-    preset_path_for_name, sanitize_preset_name, save_preset_to_file,
+    PRESET_FILE_SUFFIX, default_bands, ensure_preset_storage_dir, format_frequency,
+    load_preset_from_file, preset_path_for_name, sanitize_preset_name, save_preset_to_file,
 };
 
 /// Preset management widget.
@@ -293,14 +293,18 @@ impl PresetPanel {
                                     if let Some(file) = d.file() {
                                         let dest = file.path();
                                         if let Some(dest) = dest {
-                                            let _ = save_preset_to_file(&dest, &bands_for_export, preamp_for_export);
+                                            let _ = save_preset_to_file(
+                                                &dest,
+                                                &bands_for_export,
+                                                preamp_for_export,
+                                            );
                                         }
                                     }
                                 }
                                 d.close();
                             });
 
-                             dialog.show();
+                            dialog.show();
                         }
                     }
                 }
@@ -343,7 +347,9 @@ impl PresetPanel {
                     if let Some(label) = child.downcast_ref::<gtk4::Label>() {
                         let name = label.label();
                         let mut panel_mut = panel_clone.borrow_mut();
-                        if let Ok((preamp, bands)) = load_preset_from_file(&preset_path_for_name(&name)) {
+                        if let Ok((preamp, bands)) =
+                            load_preset_from_file(&preset_path_for_name(&name))
+                        {
                             panel_mut.current_bands = bands;
                             panel_mut.current_preamp_db = preamp;
                             panel_mut.current_preset_name = Some(name.to_string());
@@ -399,7 +405,9 @@ impl PresetPanel {
     pub fn start_file_monitoring(&mut self) {
         let dir = crate::core::ensure_preset_storage_dir();
         let file = gio::File::for_path(&dir);
-        if let Ok(monitor) = file.monitor_directory(gio::FileMonitorFlags::NONE, gio::Cancellable::NONE) {
+        if let Ok(monitor) =
+            file.monitor_directory(gio::FileMonitorFlags::NONE, gio::Cancellable::NONE)
+        {
             let list_box = self.list_box.clone();
             let handler = monitor.connect_changed(move |_, _, _, _| {
                 refresh_preset_list(&list_box);
@@ -445,7 +453,11 @@ impl PresetPanel {
     }
 
     pub fn update_state_chip(&mut self) {
-        let signature = self.get_signature_callback.as_ref().map(|f| f()).unwrap_or_default();
+        let signature = self
+            .get_signature_callback
+            .as_ref()
+            .map(|f| f())
+            .unwrap_or_default();
         let current_name = self.current_preset_name.as_deref();
         let saved_sig = self.saved_signature.as_deref();
 
@@ -477,7 +489,12 @@ impl PresetPanel {
         self.current_bands = bands;
         self.current_preamp_db = preamp;
         self.current_preset_name = Some(preset_name.clone());
-        self.saved_signature = Some(self.get_signature_callback.as_ref().map(|f| f()).unwrap_or_default());
+        self.saved_signature = Some(
+            self.get_signature_callback
+                .as_ref()
+                .map(|f| f())
+                .unwrap_or_default(),
+        );
         self.set_curve_revert_baseline(Some(preset_name));
         self.update_state_chip();
         Ok(())
@@ -559,7 +576,9 @@ pub fn list_preset_names() -> Vec<String> {
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().is_some_and(|e| e == PRESET_FILE_SUFFIX.strip_prefix('.').unwrap_or("json"))
+            if path
+                .extension()
+                .is_some_and(|e| e == PRESET_FILE_SUFFIX.strip_prefix('.').unwrap_or("json"))
                 && let Some(stem) = path.file_stem()
             {
                 names.push(stem.to_string_lossy().to_string());
@@ -569,5 +588,3 @@ pub fn list_preset_names() -> Vec<String> {
     names.sort();
     names
 }
-
-

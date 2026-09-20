@@ -5,7 +5,7 @@ use gtk4::prelude::*;
 
 use crate::core::{
     EQ_FREQUENCY_MAX_HZ, EQ_FREQUENCY_MIN_HZ, EQ_GAIN_MAX_DB, EQ_GAIN_MIN_DB, FilterType,
-    total_response_db_at_frequencies, SAMPLE_RATE,
+    SAMPLE_RATE, total_response_db_at_frequencies,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -243,7 +243,8 @@ impl EqGraph {
             frequencies.push(freq);
         }
 
-        let response = total_response_db_at_frequencies(bands, preamp_db, SAMPLE_RATE, &frequencies);
+        let response =
+            total_response_db_at_frequencies(bands, preamp_db, SAMPLE_RATE, &frequencies);
 
         for (i, &db) in response.iter().enumerate() {
             let y = center_y - (db / gain_range) * center_y;

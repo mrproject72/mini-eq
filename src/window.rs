@@ -78,10 +78,8 @@ impl MiniEqWindow {
         header_bar.pack_end(&inspector_button);
 
         // Build main layout with utility pane
-        let (split_view, band_scrolled, band_faders) = window_layout::build_main_layout(
-            &utility,
-            crate::core::DEFAULT_ACTIVE_BANDS,
-        );
+        let (split_view, band_scrolled, band_faders) =
+            window_layout::build_main_layout(&utility, crate::core::DEFAULT_ACTIVE_BANDS);
         let split_view = Rc::new(RefCell::new(split_view));
 
         // Build toolbar view
@@ -146,7 +144,9 @@ impl MiniEqWindow {
                 fader.borrow().set_height(164);
             }
             analyzer_for_compact.borrow_mut().set_height(80);
-            graph_for_compact.borrow_mut().set_mode(crate::window_graph::GraphMode::Compact);
+            graph_for_compact
+                .borrow_mut()
+                .set_mode(crate::window_graph::GraphMode::Compact);
             band_scrolled_for_compact.set_min_content_height(150);
         });
         let band_faders_for_compact = band_faders.clone();
@@ -218,10 +218,9 @@ impl MiniEqWindow {
         {
             let presets = utility.presets.clone();
             let band_faders = band_faders.clone();
-            let default_sig = crate::core::preset_payload_state_signature(&crate::core::preset_payload(
-                &crate::core::default_bands(),
-                0.0,
-            ));
+            let default_sig = crate::core::preset_payload_state_signature(
+                &crate::core::preset_payload(&crate::core::default_bands(), 0.0),
+            );
             let apply_band_faders = band_faders.clone();
             let reset_band_faders = band_faders.clone();
             let sig_band_faders = band_faders.clone();
@@ -230,8 +229,13 @@ impl MiniEqWindow {
                     for (i, band) in bands.iter().enumerate() {
                         if let Some(fader) = apply_band_faders.get(i) {
                             let mut f = fader.borrow_mut();
-                            f.gain_db = band.gain_db.clamp(crate::core::EQ_GAIN_MIN_DB, crate::core::EQ_GAIN_MAX_DB);
-                            f.frequency = band.frequency.clamp(crate::core::EQ_FREQUENCY_MIN_HZ, crate::core::EQ_FREQUENCY_MAX_HZ);
+                            f.gain_db = band
+                                .gain_db
+                                .clamp(crate::core::EQ_GAIN_MIN_DB, crate::core::EQ_GAIN_MAX_DB);
+                            f.frequency = band.frequency.clamp(
+                                crate::core::EQ_FREQUENCY_MIN_HZ,
+                                crate::core::EQ_FREQUENCY_MAX_HZ,
+                            );
                             f.q_value = band.q.clamp(crate::core::EQ_Q_MIN, crate::core::EQ_Q_MAX);
                             f.filter_type = band.filter_type;
                             f.active = band.enabled;
@@ -265,7 +269,9 @@ impl MiniEqWindow {
                             }
                         })
                         .collect();
-                    crate::core::preset_payload_state_signature(&crate::core::preset_payload(&bands, 0.0))
+                    crate::core::preset_payload_state_signature(&crate::core::preset_payload(
+                        &bands, 0.0,
+                    ))
                 })),
             );
             presets.borrow_mut().set_default_signature(default_sig);

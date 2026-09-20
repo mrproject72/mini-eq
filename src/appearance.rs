@@ -62,6 +62,8 @@ pub struct AppearanceSettings {
     pub preference: String,
     pub window_width: Option<i32>,
     pub window_height: Option<i32>,
+    pub window_x: Option<i32>,
+    pub window_y: Option<i32>,
 }
 
 impl AppearanceSettings {
