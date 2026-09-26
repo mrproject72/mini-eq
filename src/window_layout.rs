@@ -10,8 +10,13 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 /// Build the band fader row layout.
+///
+/// `selection_changed_callback` receives the index of the band the user just
+/// selected; the owner is responsible for clearing the other faders (a fader
+/// cannot do that itself without holding borrows on its siblings).
 pub fn build_band_faders(
     visible_bands: usize,
+    selection_changed_callback: Rc<dyn Fn(usize)>,
 ) -> (
     gtk4::ScrolledWindow,
     Vec<Rc<RefCell<crate::band_fader::EqBandFader>>>,
@@ -40,6 +45,7 @@ pub fn build_band_faders(
             q,
             crate::core::FilterType::Off,
             i < DEFAULT_ACTIVE_BANDS,
+            selection_changed_callback.clone(),
         );
         faders.push(band.fader.clone());
         band_box.append(band.widget());
@@ -107,6 +113,7 @@ pub fn build_band_editor() -> gtk4::Box {
 pub fn build_main_layout(
     utility: &UtilityPane,
     visible_bands: usize,
+    selection_changed_callback: Rc<dyn Fn(usize)>,
 ) -> (
     adw::OverlaySplitView,
     gtk4::ScrolledWindow,
@@ -116,7 +123,7 @@ pub fn build_main_layout(
 
     main_box.append(utility.graph.borrow().widget());
 
-    let (band_scrolled, faders) = build_band_faders(visible_bands);
+    let (band_scrolled, faders) = build_band_faders(visible_bands, selection_changed_callback);
     main_box.append(&band_scrolled);
 
     let band_editor = build_band_editor();

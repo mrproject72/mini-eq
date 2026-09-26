@@ -55,12 +55,19 @@ pub struct EqBandFader {
     pub drag_start_gain_db: f64,
     pub dragging_gain: bool,
     pub gain_changed_callback: Option<Box<dyn Fn(usize, f64) + 'static>>,
+    /// Invoked when the user selects this band. The owner clears the other
+    /// faders and mirrors the selection into the response graph, so this is a
+    /// request rather than a direct `selected` mutation. Stored as an `Rc` so
+    /// the handler can clone it out and invoke it without holding a borrow on
+    /// this fader (the owner re-enters to set `selected`).
+    pub selection_changed_callback: Option<Rc<dyn Fn(usize)>>,
 }
 
 impl EqBandFader {
     pub fn new(
         index: usize,
         gain_changed_callback: Box<dyn Fn(usize, f64) + 'static>,
+        selection_changed_callback: Rc<dyn Fn(usize)>,
     ) -> Rc<RefCell<Self>> {
         let fader = Rc::new(RefCell::new(Self {
             container: gtk4::Box::new(gtk4::Orientation::Vertical, 0),
@@ -83,6 +90,7 @@ impl EqBandFader {
             drag_start_gain_db: 0.0,
             dragging_gain: false,
             gain_changed_callback: Some(gain_changed_callback),
+            selection_changed_callback: Some(selection_changed_callback),
         }));
 
         {
@@ -184,9 +192,13 @@ impl EqBandFader {
             let fader_clone = fader.clone();
             let click = gtk4::GestureClick::new();
             click.connect_pressed(move |_gesture, _press_count, _x, _y| {
-                let mut f = fader_clone.borrow_mut();
-                f.selected = true;
-                f.drawing_area.queue_draw();
+                let (index, select) = {
+                    let f = fader_clone.borrow();
+                    (f.index, f.selection_changed_callback.clone())
+                };
+                if let Some(cb) = select {
+                    cb(index);
+                }
             });
             fader.borrow().drawing_area.add_controller(click);
         }
@@ -250,7 +262,6 @@ impl EqBandFader {
 
                 match key {
                     gtk4::gdk::Key::_0 | gtk4::gdk::Key::KP_0 | gtk4::gdk::Key::Home => {
-                        f.selected = true;
                         if f.gain_db != 0.0 {
                             f.gain_db = 0.0;
                             if let Some(cb) = &f.gain_changed_callback {
@@ -258,14 +269,23 @@ impl EqBandFader {
                             }
                             f.drawing_area.queue_draw();
                         }
+                        let (index, select) = (f.index, f.selection_changed_callback.clone());
+                        drop(f);
+                        if let Some(cb) = select {
+                            cb(index);
+                        }
+                        return glib::Propagation::Proceed;
                     }
                     gtk4::gdk::Key::Return | gtk4::gdk::Key::KP_Enter | gtk4::gdk::Key::space => {
-                        f.selected = !f.selected;
+                        let (index, select) = (f.index, f.selection_changed_callback.clone());
+                        drop(f);
+                        if let Some(cb) = select {
+                            cb(index);
+                        }
+                        return glib::Propagation::Proceed;
                     }
                     _ => return glib::Propagation::Proceed,
                 }
-                f.drawing_area.queue_draw();
-                glib::Propagation::Proceed
             });
             fader.borrow().drawing_area.add_controller(key);
         }

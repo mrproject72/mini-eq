@@ -77,9 +77,35 @@ impl MiniEqWindow {
         inspector_button.set_tooltip_text(Some("Inspector Pane"));
         header_bar.pack_end(&inspector_button);
 
-        // Build main layout with utility pane
-        let (split_view, band_scrolled, band_faders) =
-            window_layout::build_main_layout(&utility, crate::core::DEFAULT_ACTIVE_BANDS);
+        // Build main layout with utility pane.
+        //
+        // Selection is coordinated here rather than inside a fader: the clicked
+        // fader reports the index and the owner clears its siblings and mirrors
+        // the choice into the response graph. The registry is filled in after
+        // the layout is built, so the closure captures an empty cell for now.
+        let fader_registry: Rc<RefCell<Vec<Rc<RefCell<crate::band_fader::EqBandFader>>>>> =
+            Rc::new(RefCell::new(Vec::new()));
+        let selection_callback = {
+            let registry = fader_registry.clone();
+            let graph = utility.graph.clone();
+            Rc::new(move |index: usize| {
+                for fader in registry.borrow().iter() {
+                    let mut f = fader.borrow_mut();
+                    let should_select = f.index == index;
+                    if f.selected != should_select {
+                        f.selected = should_select;
+                        f.drawing_area.queue_draw();
+                    }
+                }
+                graph.borrow_mut().set_selected_band(Some(index));
+            }) as Rc<dyn Fn(usize)>
+        };
+        let (split_view, band_scrolled, band_faders) = window_layout::build_main_layout(
+            &utility,
+            crate::core::DEFAULT_ACTIVE_BANDS,
+            selection_callback,
+        );
+        *fader_registry.borrow_mut() = band_faders.clone();
         let split_view = Rc::new(RefCell::new(split_view));
 
         // Build toolbar view
@@ -103,6 +129,17 @@ impl MiniEqWindow {
         split_view.borrow_mut().set_enable_hide_gesture(false);
 
         window.set_content(Some(&toolbar_view));
+
+        // Inspector pane toggle mirrors the F9 binding: it reflects and drives
+        // the split view's collapsed state.
+        {
+            let split_view_for_toggle = split_view.clone();
+            inspector_button.connect_toggled(move |button| {
+                split_view_for_toggle
+                    .borrow_mut()
+                    .set_collapsed(!button.is_active());
+            });
+        }
 
         // Breakpoints: 1320sp collapses sidebar/pins END, 1080sp compacts toolbar/faders
         let narrow_bp = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
@@ -187,9 +224,10 @@ impl MiniEqWindow {
         });
         window.add_controller(key_controller);
 
-        // Start real-time update loop for graph
+        // Start real-time update loop for graph + headroom
         {
             let graph = utility.graph.clone();
+            let headroom = utility.headroom.clone();
             let band_faders = band_faders.clone();
             glib::timeout_add_local(std::time::Duration::from_millis(33), move || {
                 let bands: Vec<crate::core::EqBand> = band_faders
@@ -208,10 +246,53 @@ impl MiniEqWindow {
                         }
                     })
                     .collect();
-                let mut g = graph.borrow_mut();
-                g.update(0.0, 1000.0, 1.0, crate::core::FilterType::Bell, &bands, &[]);
+                {
+                    let mut g = graph.borrow_mut();
+                    g.update(0.0, 1000.0, 1.0, crate::core::FilterType::Bell, &bands, &[]);
+                }
+                let preamp_db = headroom.borrow().preamp_value();
+                headroom.borrow_mut().update_curve_peak(&bands, preamp_db);
                 ControlFlow::Continue
             });
+        }
+
+        // "Set Safe" lowers the preamp so the estimated curve peak clears 0 dBFS
+        // with 1 dB of margin, mirroring upstream `on_set_safe_preamp_clicked`.
+        {
+            let headroom = utility.headroom.clone();
+            let band_faders = band_faders.clone();
+            utility
+                .headroom
+                .borrow()
+                .set_safe_button
+                .connect_clicked(move |_| {
+                    let bands: Vec<crate::core::EqBand> = band_faders
+                        .iter()
+                        .map(|f| {
+                            let fader = f.borrow();
+                            crate::core::EqBand {
+                                index: fader.index,
+                                frequency: fader.frequency,
+                                gain_db: fader.gain_db,
+                                q: fader.q_value,
+                                filter_type: fader.filter_type,
+                                enabled: fader.active,
+                                solo: fader.soloed,
+                                coefficients: crate::core::BiquadCoefficients::identity(),
+                            }
+                        })
+                        .collect();
+                    let panel = headroom.borrow();
+                    let peak = crate::core::estimate_response_peak_db(
+                        &bands,
+                        panel.preamp_value(),
+                        crate::core::SAMPLE_RATE,
+                    );
+                    if peak <= 0.5 {
+                        return;
+                    }
+                    panel.set_preamp_value(panel.preamp_value() - peak - 1.0);
+                });
         }
 
         // Setup preset panel callbacks
@@ -222,14 +303,18 @@ impl MiniEqWindow {
                 &crate::core::preset_payload(&crate::core::default_bands(), 0.0),
             );
             let apply_band_faders = band_faders.clone();
+            let apply_headroom = utility.headroom.clone();
             let reset_band_faders = band_faders.clone();
+            let reset_headroom = utility.headroom.clone();
             let sig_band_faders = band_faders.clone();
+            let sig_headroom = utility.headroom.clone();
             presets.borrow_mut().set_callbacks(
-                Some(Box::new(move |bands, _preamp| {
+                Some(Box::new(move |bands, preamp| {
                     // Upstream re-syncs every fader from the loaded bands
                     // (`update_band_fader`), so mute/solo come from the preset
                     // rather than from the pre-load UI state.
                     let solo_active = crate::core::bands_have_solo(&bands);
+                    apply_headroom.borrow().set_preamp_value(preamp);
                     for (i, band) in bands.iter().enumerate() {
                         if let Some(fader) = apply_band_faders.get(i) {
                             let frequency = band.frequency.clamp(
@@ -260,6 +345,8 @@ impl MiniEqWindow {
                 Some(Box::new(move || {
                     let defaults =
                         crate::core::compute_log_spaced_band_defaults(reset_band_faders.len());
+                    // Upstream `reset_state` also zeroes the preamp.
+                    reset_headroom.borrow().set_preamp_value(0.0);
                     for (i, fader) in reset_band_faders.iter().enumerate() {
                         let mut f = fader.borrow_mut();
                         let (frequency, q) = defaults.get(i).copied().unwrap_or((1000.0, 1.0));
@@ -302,7 +389,8 @@ impl MiniEqWindow {
                         })
                         .collect();
                     crate::core::preset_payload_state_signature(&crate::core::preset_payload(
-                        &bands, 0.0,
+                        &bands,
+                        sig_headroom.borrow().preamp_value(),
                     ))
                 })),
             );

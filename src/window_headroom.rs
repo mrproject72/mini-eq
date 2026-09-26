@@ -179,6 +179,27 @@ impl HeadroomPanel {
             "Curve stays below 0 dBFS.".to_string()
         };
         self.detail_label.set_label(&detail);
+
+        // Upstream only surfaces "Set Safe" when the curve is actually at risk.
+        let needs_fix = peak_db > 0.5;
+        self.set_safe_button.set_visible(needs_fix);
+        self.set_safe_button.set_sensitive(needs_fix);
+    }
+
+    /// Recompute the estimated curve peak from the live band state and refresh
+    /// the panel, mirroring upstream `update_status_summary`.
+    pub fn update_curve_peak(&mut self, bands: &[crate::core::EqBand], preamp_db: f64) {
+        let peak =
+            crate::core::estimate_response_peak_db(bands, preamp_db, crate::core::SAMPLE_RATE);
+        self.update_peak(peak);
+    }
+
+    pub fn preamp_value(&self) -> f64 {
+        self.preamp_spin.value()
+    }
+
+    pub fn set_preamp_value(&self, preamp_db: f64) {
+        self.preamp_spin.set_value(preamp_db);
     }
 
     pub fn widget(&self) -> &gtk4::Box {
@@ -197,9 +218,21 @@ impl HeadroomPanel {
         // spans HEADROOM_METER_MIN_DB..HEADROOM_METER_MAX_DB (-12..+24 dB), with
         // colour changes at the safe (-3 dB) and risk (0 dB) limits.
         let segments = [
-            (HEADROOM_METER_MIN_DB, HEADROOM_SAFE_LIMIT_DB, (0.38, 0.78, 0.50)),
-            (HEADROOM_SAFE_LIMIT_DB, HEADROOM_RISK_LIMIT_DB, (0.58, 0.66, 0.76)),
-            (HEADROOM_RISK_LIMIT_DB, HEADROOM_METER_MAX_DB, (1.0, 0.35, 0.28)),
+            (
+                HEADROOM_METER_MIN_DB,
+                HEADROOM_SAFE_LIMIT_DB,
+                (0.38, 0.78, 0.50),
+            ),
+            (
+                HEADROOM_SAFE_LIMIT_DB,
+                HEADROOM_RISK_LIMIT_DB,
+                (0.58, 0.66, 0.76),
+            ),
+            (
+                HEADROOM_RISK_LIMIT_DB,
+                HEADROOM_METER_MAX_DB,
+                (1.0, 0.35, 0.28),
+            ),
         ];
 
         for (left_db, right_db, color) in segments {
@@ -230,5 +263,33 @@ impl HeadroomPanel {
 impl Default for HeadroomPanel {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_headroom_meter_norm_endpoints_and_clamp() {
+        assert!((headroom_meter_norm(HEADROOM_METER_MIN_DB) - 0.0).abs() < 1e-9);
+        assert!((headroom_meter_norm(HEADROOM_METER_MAX_DB) - 1.0).abs() < 1e-9);
+        assert!((headroom_meter_norm(HEADROOM_METER_MIN_DB - 50.0) - 0.0).abs() < 1e-9);
+        assert!((headroom_meter_norm(HEADROOM_METER_MAX_DB + 50.0) - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_format_headroom_peak_db_matches_upstream() {
+        assert_eq!(
+            format_headroom_peak_db(HEADROOM_METER_MAX_DB + 1.0),
+            ">+24 dB"
+        );
+        assert_eq!(
+            format_headroom_peak_db(HEADROOM_METER_MIN_DB - 1.0),
+            "<12 dB"
+        );
+        assert_eq!(format_headroom_peak_db(-4.5), "4.5 dB");
+        assert_eq!(format_headroom_peak_db(0.0), "+0.0 dB");
+        assert_eq!(format_headroom_peak_db(3.14), "+3.1 dB");
     }
 }

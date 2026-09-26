@@ -4,7 +4,7 @@ use gtk4::cairo::Context;
 use gtk4::prelude::*;
 
 use crate::core::{
-    EQ_FREQUENCY_MAX_HZ, EQ_FREQUENCY_MIN_HZ, GRAPH_DB_MAX, GRAPH_DB_MIN, FilterType, SAMPLE_RATE,
+    EQ_FREQUENCY_MAX_HZ, EQ_FREQUENCY_MIN_HZ, FilterType, GRAPH_DB_MAX, GRAPH_DB_MIN, SAMPLE_RATE,
     total_response_db_at_frequencies,
 };
 
@@ -285,5 +285,25 @@ impl EqGraph {
 impl Default for EqGraph {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_db_to_y_maps_axis_endpoints() {
+        // The axis is inverted: GRAPH_DB_MAX sits at the top (y = 0).
+        assert!((db_to_y(GRAPH_DB_MAX, 100.0) - 0.0).abs() < 1e-9);
+        assert!((db_to_y(GRAPH_DB_MIN, 100.0) - 100.0).abs() < 1e-9);
+        // 0 dB is the midpoint of a symmetric ±24 dB axis.
+        assert!((db_to_y(0.0, 100.0) - 50.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_db_to_y_clamps_out_of_range() {
+        assert!((db_to_y(100.0, 100.0) - db_to_y(GRAPH_DB_MAX, 100.0)).abs() < 1e-9);
+        assert!((db_to_y(-100.0, 100.0) - db_to_y(GRAPH_DB_MIN, 100.0)).abs() < 1e-9);
     }
 }

@@ -22,12 +22,14 @@ impl WindowBandFader {
         q: f64,
         filter_type: FilterType,
         enabled: bool,
+        selection_changed_callback: Rc<dyn Fn(usize)>,
     ) -> Self {
         let fader = EqBandFader::new(
             index,
             Box::new(move |idx, gain| {
                 let _ = (idx, gain);
             }),
+            selection_changed_callback,
         );
         {
             let mut f = fader.borrow_mut();
