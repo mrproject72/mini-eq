@@ -139,6 +139,11 @@ const STYLE_CSS: &str = r#"
     color: var(--accent-color);
 }
 
+.preset-state-chip-neutral {
+    background-color: color-mix(in srgb, var(--text-muted) 20%, transparent);
+    color: var(--text-muted);
+}
+
 .system-state-chip {
     border-radius: 10px;
     padding: 2px 8px;

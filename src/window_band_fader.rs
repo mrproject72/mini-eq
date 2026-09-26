@@ -76,18 +76,13 @@ impl WindowBandFader {
     }
 }
 
-fn format_frequency_label(frequency: f64) -> String {
-    if frequency >= 1000.0 {
-        format!("{:.2} kHz", frequency / 1000.0)
-    } else {
-        format!("{:.0} Hz", frequency)
-    }
+/// Fader frequency caption. Upstream passes `core.format_frequency` here, e.g.
+/// `"1.0k"` / `"500"`, so delegate to the shared formatter for parity.
+pub(crate) fn format_frequency_label(frequency: f64) -> String {
+    crate::core::format_frequency(frequency)
 }
 
-fn format_q_label(q: f64) -> String {
-    if q >= 10.0 {
-        format!("{:.1}", q)
-    } else {
-        format!("{:.2}", q)
-    }
+/// Fader Q caption. Upstream always uses two decimals (`f"{band.q:.2f}"`).
+pub(crate) fn format_q_label(q: f64) -> String {
+    format!("{:.2}", q)
 }

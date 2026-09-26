@@ -1,8 +1,19 @@
+use std::cell::Cell;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use log::{debug, info, warn};
-use pipewire::{Error, core::CoreRc, properties::properties, stream::StreamBox, types::ObjectType};
+use pipewire::{
+    Error,
+    core::{CoreRc, PW_ID_CORE},
+    loop_::Timeout,
+    main_loop::MainLoopRc,
+    properties::properties,
+    stream::StreamBox,
+    types::ObjectType,
+};
 
 use crate::core::{FILTER_OUTPUT_SUFFIX, OUTPUT_CLIENT_NAME, SAMPLE_RATE, VIRTUAL_SINK_BASE};
 
@@ -37,6 +48,7 @@ pub struct StreamInfo {
 
 pub struct RoutingEngine {
     core: CoreRc,
+    mainloop: MainLoopRc,
     routes: Arc<Mutex<Vec<OutputRoute>>>,
     links: Arc<Mutex<Vec<RouteInfo>>>,
     streams: Arc<Mutex<HashMap<u32, StreamInfo>>>,
@@ -47,11 +59,12 @@ pub struct RoutingEngine {
 }
 
 impl RoutingEngine {
-    pub fn new(core: CoreRc) -> Self {
+    pub fn new(core: CoreRc, mainloop: MainLoopRc) -> Self {
         info!("Initializing RoutingEngine");
 
         RoutingEngine {
             core,
+            mainloop,
             routes: Arc::new(Mutex::new(Vec::new())),
             links: Arc::new(Mutex::new(Vec::new())),
             streams: Arc::new(Mutex::new(HashMap::new())),
@@ -60,6 +73,45 @@ impl RoutingEngine {
             current_sink: None,
             virtual_sink_name: format!("{}.source", VIRTUAL_SINK_BASE),
         }
+    }
+
+    /// Pump the main loop until the server acknowledges a `sync` roundtrip.
+    ///
+    /// Registry `global` events are queued on the PipeWire socket, so a listener
+    /// that is registered and then immediately inspected sees nothing. This is
+    /// the barrier that makes `detect_routes`/`scan_streams`/`create_link`
+    /// actually observe the objects they registered callbacks for.
+    fn roundtrip(&self) -> Result<(), Error> {
+        let done = Rc::new(Cell::new(false));
+        let pending = self.core.sync(0)?;
+
+        let done_clone = done.clone();
+        let loop_clone = self.mainloop.clone();
+        let _listener = self
+            .core
+            .add_listener_local()
+            .done(move |id, seq| {
+                if id == PW_ID_CORE && seq == pending {
+                    done_clone.set(true);
+                    loop_clone.quit();
+                }
+            })
+            .register();
+
+        // The server may already be idle; the finite timeout bounds the wait so
+        // a missing `done` event cannot hang the caller forever.
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while !done.get() && std::time::Instant::now() < deadline {
+            self.mainloop
+                .loop_()
+                .iterate(Timeout::Finite(Duration::from_millis(100)));
+        }
+
+        if !done.get() {
+            warn!("PipeWire roundtrip timed out");
+        }
+
+        Ok(())
     }
 
     pub fn with_auto_route(mut self, auto: bool) -> Self {
@@ -94,6 +146,10 @@ impl RoutingEngine {
             }
         });
         let _listener = listener.register();
+
+        // The listener only receives `global` events while it is alive and the
+        // loop is being pumped; without this the snapshot below is always empty.
+        self.roundtrip()?;
 
         let result = routes.lock().unwrap().clone();
         info!("Detected {} output routes", result.len());
@@ -166,6 +222,9 @@ impl RoutingEngine {
             }
         });
         let _listener = listener.register();
+
+        // Pump the loop so the `global` events populate `link_id`.
+        self.roundtrip()?;
 
         let lid = *link_id.lock().unwrap();
         let target = target_name.lock().unwrap();
@@ -250,6 +309,9 @@ impl RoutingEngine {
             }
         });
         let _listener = listener.register();
+
+        // Pump the loop so the `global` events populate the stream snapshot.
+        self.roundtrip()?;
 
         let result = streams.lock().unwrap().clone();
         info!("Scanned {} streams", result.len());
@@ -377,6 +439,6 @@ impl Default for RoutingEngine {
         let core = context
             .connect_rc(None)
             .expect("Failed to connect to PipeWire");
-        RoutingEngine::new(core)
+        RoutingEngine::new(core, mainloop)
     }
 }

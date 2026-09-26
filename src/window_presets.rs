@@ -8,8 +8,8 @@ use gtk4::prelude::*;
 
 use crate::autoeq::parse_apo_file;
 use crate::core::{
-    PRESET_FILE_SUFFIX, default_bands, ensure_preset_storage_dir, format_frequency,
-    load_preset_from_file, preset_path_for_name, sanitize_preset_name, save_preset_to_file,
+    PRESET_FILE_SUFFIX, default_bands, format_frequency, load_preset_from_file,
+    preset_path_for_name, sanitize_preset_name, save_preset_to_file,
 };
 
 /// Preset management widget.
@@ -42,6 +42,9 @@ pub struct PresetPanel {
     revert_baseline_payload: Option<serde_json::Value>,
     default_signature: Option<String>,
     file_monitor: Option<glib::SignalHandlerId>,
+    /// Guards `preset_combo` programmatic updates so `connect_changed` does not
+    /// re-enter the panel while a `borrow_mut()` is on the stack.
+    suppress_combo_signal: Rc<std::cell::Cell<bool>>,
 }
 
 impl PresetPanel {
@@ -167,34 +170,33 @@ impl PresetPanel {
             revert_baseline_payload: None,
             default_signature: None,
             file_monitor: None,
+            suppress_combo_signal: Rc::new(std::cell::Cell::new(false)),
         }));
 
         let panel_clone = panel.clone();
         panel.borrow().add_button.connect_clicked(move |_| {
-            let list_box = &panel_clone.borrow().list_box;
+            let list_box = panel_clone.borrow().list_box.clone();
             let count = list_box
                 .first_child()
-                .map_or(0, |_| count_children(list_box));
+                .map_or(0, |_| count_children(&list_box));
             let name = format!("preset_{}", count + 1);
             let sanitized = sanitize_preset_name(&name);
             let path = preset_path_for_name(&sanitized);
             let bands = default_bands();
             let _ = save_preset_to_file(&path, &bands, 0.0);
-            refresh_preset_list(list_box);
+            refresh_preset_list(&list_box);
         });
 
         let panel_clone = panel.clone();
         panel.borrow().delete_button.connect_clicked(move |_| {
-            let list_box = &panel_clone.borrow().list_box;
+            let list_box = panel_clone.borrow().list_box.clone();
             if let Some(row) = list_box.selected_row() {
                 if let Some(child) = row.child() {
                     if let Some(label) = child.downcast_ref::<gtk4::Label>() {
-                        let name = label.label();
-                        let path = preset_path_for_name(&name);
-                        let _ = std::fs::remove_file(&path);
+                        let _ = crate::core::delete_preset_file(&label.label());
                     }
                 }
-                refresh_preset_list(list_box);
+                refresh_preset_list(&list_box);
             }
         });
 
@@ -313,49 +315,72 @@ impl PresetPanel {
 
         let panel_clone = panel.clone();
         panel.borrow().revert_button.connect_clicked(move |_| {
-            let mut panel_ref = panel_clone.borrow_mut();
-            panel_ref.revert_to_baseline();
-            panel_ref.refresh_list();
+            // Scope the borrow: `refresh_list()` mutates `preset_combo`, which
+            // emits `changed` synchronously and would otherwise re-enter here.
+            {
+                let mut panel_ref = panel_clone.borrow_mut();
+                panel_ref.revert_to_baseline();
+            }
+            panel_clone.borrow().refresh_list();
         });
 
         let panel_clone = panel.clone();
         panel.borrow().reset_button.connect_clicked(move |_| {
-            let mut panel_ref = panel_clone.borrow_mut();
-            panel_ref.reset_to_neutral();
-            panel_ref.refresh_list();
+            {
+                let mut panel_ref = panel_clone.borrow_mut();
+                panel_ref.reset_to_neutral();
+            }
+            panel_clone.borrow().refresh_list();
         });
 
+        let suppress = panel.borrow().suppress_combo_signal.clone();
         let panel_clone = panel.clone();
         panel.borrow().preset_combo.connect_changed(move |combo| {
+            if suppress.get() {
+                return;
+            }
+            // Index 0 is the "-- Select Preset --" placeholder.
             let selected = combo.active();
-            if selected != Some(0) {
+            if selected == Some(0) {
                 return;
             }
             if let Some(name) = combo.active_text() {
-                let mut panel_ref = panel_clone.borrow_mut();
-                if let Err(e) = panel_ref.load_library_preset(&name) {
-                    eprintln!("Failed to load preset: {}", e);
+                {
+                    let mut panel_ref = panel_clone.borrow_mut();
+                    if let Err(e) = panel_ref.load_library_preset(&name) {
+                        eprintln!("Failed to load preset: {}", e);
+                    }
                 }
-                panel_ref.refresh_list();
+                panel_clone.borrow().refresh_list();
             }
         });
 
         let panel_clone = panel.clone();
         panel.borrow().list_box.connect_row_selected(move |_, row| {
-            if let Some(row) = row {
-                if let Some(child) = row.child() {
-                    if let Some(label) = child.downcast_ref::<gtk4::Label>() {
-                        let name = label.label();
-                        let mut panel_mut = panel_clone.borrow_mut();
-                        if let Ok((preamp, bands)) =
-                            load_preset_from_file(&preset_path_for_name(&name))
-                        {
-                            panel_mut.current_bands = bands;
-                            panel_mut.current_preamp_db = preamp;
-                            panel_mut.current_preset_name = Some(name.to_string());
-                            panel_mut.update_state_chip();
-                        }
+            let Some(row) = row else { return };
+            let Some(child) = row.child() else { return };
+            let Some(label) = child.downcast_ref::<gtk4::Label>() else {
+                return;
+            };
+            let name = label.label();
+            {
+                let mut panel_mut = panel_clone.borrow_mut();
+                if let Ok((preamp, bands)) = load_preset_from_file(&preset_path_for_name(&name)) {
+                    if let Some(ref apply) = panel_mut.apply_bands_callback {
+                        apply(bands.clone(), preamp);
                     }
+                    panel_mut.current_bands = bands;
+                    panel_mut.current_preamp_db = preamp;
+                    panel_mut.current_preset_name = Some(name.to_string());
+                    panel_mut.saved_signature = Some(
+                        panel_mut
+                            .get_signature_callback
+                            .as_ref()
+                            .map(|f| f())
+                            .unwrap_or_default(),
+                    );
+                    panel_mut.set_curve_revert_baseline(Some(name.to_string()));
+                    panel_mut.update_state_chip();
                 }
             }
         });
@@ -423,12 +448,16 @@ impl PresetPanel {
 
     fn refresh_preset_combo(&self) {
         let names = list_preset_names();
+        // `remove_all`/`append`/`set_active` all emit `changed`; suppress the
+        // handler so it cannot re-enter the panel mid-update.
+        self.suppress_combo_signal.set(true);
         self.preset_combo.remove_all();
         self.preset_combo.append(Some("-- Select Preset --"), "");
         for name in &names {
             self.preset_combo.append(Some(name.as_str()), name.as_str());
         }
         self.preset_combo.set_active(Some(0));
+        self.suppress_combo_signal.set(false);
     }
 
     pub fn set_bands_and_preamp(&mut self, bands: &[crate::core::EqBand], preamp_db: f64) {
@@ -461,18 +490,22 @@ impl PresetPanel {
         let current_name = self.current_preset_name.as_deref();
         let saved_sig = self.saved_signature.as_deref();
 
-        if current_name.is_some() && signature == saved_sig.unwrap_or(&signature) {
+        if current_name.is_some() && saved_sig == Some(signature.as_str()) {
             self.state_chip.set_text("Saved");
-            self.state_chip.set_css_classes(&["preset-state-saved"]);
+            self.state_chip
+                .set_css_classes(&["preset-state-chip", "preset-state-chip-saved"]);
         } else if current_name.is_some() {
             self.state_chip.set_text("Modified");
-            self.state_chip.set_css_classes(&["preset-state-modified"]);
-        } else if signature == self.default_signature.as_deref().unwrap_or(&signature) {
+            self.state_chip
+                .set_css_classes(&["preset-state-chip", "preset-state-chip-modified"]);
+        } else if self.default_signature.as_deref() == Some(signature.as_str()) {
             self.state_chip.set_text("Neutral");
-            self.state_chip.set_css_classes(&["preset-state-neutral"]);
+            self.state_chip
+                .set_css_classes(&["preset-state-chip", "preset-state-chip-neutral"]);
         } else {
             self.state_chip.set_text("Unsaved");
-            self.state_chip.set_css_classes(&["preset-state-unsaved"]);
+            self.state_chip
+                .set_css_classes(&["preset-state-chip", "preset-state-chip-unsaved"]);
         }
     }
 
@@ -566,25 +599,10 @@ fn refresh_preset_list(list_box: &gtk4::ListBox) {
 
 /// Get the preset storage directory.
 pub fn preset_storage_dir() -> PathBuf {
-    PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".config/mini-eq/presets")
+    crate::core::preset_storage_dir()
 }
 
-/// List all preset names (sorted).
+/// List all preset names (de-duplicated, case-insensitively sorted).
 pub fn list_preset_names() -> Vec<String> {
-    let dir = ensure_preset_storage_dir();
-    let mut names = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path
-                .extension()
-                .is_some_and(|e| e == PRESET_FILE_SUFFIX.strip_prefix('.').unwrap_or("json"))
-                && let Some(stem) = path.file_stem()
-            {
-                names.push(stem.to_string_lossy().to_string());
-            }
-        }
-    }
-    names.sort();
-    names
+    crate::core::list_preset_names()
 }

@@ -6,6 +6,31 @@ use std::rc::Rc;
 use gtk4::cairo::Context;
 use gtk4::prelude::*;
 
+/// Meter axis bounds, matching upstream `window_headroom`.
+pub const HEADROOM_METER_MIN_DB: f64 = -12.0;
+pub const HEADROOM_METER_MAX_DB: f64 = 24.0;
+pub const HEADROOM_SAFE_LIMIT_DB: f64 = -3.0;
+pub const HEADROOM_RISK_LIMIT_DB: f64 = 0.0;
+
+/// Position of `value_db` along the meter, in `0.0..=1.0`.
+pub fn headroom_meter_norm(value_db: f64) -> f64 {
+    let span = HEADROOM_METER_MAX_DB - HEADROOM_METER_MIN_DB;
+    ((value_db - HEADROOM_METER_MIN_DB) / span).clamp(0.0, 1.0)
+}
+
+/// Peak text formatting, mirroring upstream `format_headroom_peak_db`.
+pub fn format_headroom_peak_db(peak_db: f64) -> String {
+    if peak_db > HEADROOM_METER_MAX_DB {
+        format!(">{:+.0} dB", HEADROOM_METER_MAX_DB)
+    } else if peak_db < HEADROOM_METER_MIN_DB {
+        format!("<{:.0} dB", HEADROOM_METER_MIN_DB.abs())
+    } else if peak_db < HEADROOM_RISK_LIMIT_DB {
+        format!("{:.1} dB", peak_db.abs())
+    } else {
+        format!("{:+.1} dB", peak_db)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeadroomState {
     Safe,
@@ -130,32 +155,28 @@ impl HeadroomPanel {
 
     pub fn update_peak(&mut self, peak_db: f64) {
         *self.peak_value.borrow_mut() = peak_db;
-        let label = if peak_db.is_infinite() || peak_db < -100.0 {
-            "Peak: -inf dBFS".to_string()
-        } else {
-            format!("Peak: {:.1} dBFS", peak_db)
-        };
-        self.peak_label.set_label(&label);
 
-        let state = if peak_db.is_infinite() || peak_db < -100.0 {
-            HeadroomState::Safe
-        } else if peak_db > -3.0 {
+        // Upstream classifies the *estimated curve peak* (not a live signal
+        // level): clipping risk above +0.5 dB, tight between -0.5 and +0.5 dB,
+        // safe below that.
+        let state = if peak_db > 0.5 {
             HeadroomState::Risk
-        } else if peak_db > -6.0 {
+        } else if peak_db > -0.5 {
             HeadroomState::Tight
         } else {
             HeadroomState::Safe
         };
         self.set_state(state);
 
-        let detail = if peak_db.is_infinite() || peak_db < -100.0 {
-            "".to_string()
-        } else if peak_db > -3.0 {
-            format!("{:.1} dBFS — reduce input or preamp", peak_db)
-        } else if peak_db > -6.0 {
-            format!("{:.1} dBFS — close to limit", peak_db)
+        let peak_text = format!("Peak: {}", format_headroom_peak_db(peak_db));
+        self.peak_label.set_label(&peak_text);
+
+        let detail = if peak_db > 0.5 {
+            format!("Lower preamp by {:.1} dB.", peak_db + 1.0)
+        } else if peak_db > -0.5 {
+            "Small boosts may clip.".to_string()
         } else {
-            format!("{:.1} dBFS", peak_db)
+            "Curve stays below 0 dBFS.".to_string()
         };
         self.detail_label.set_label(&detail);
     }
@@ -164,7 +185,7 @@ impl HeadroomPanel {
         &self.container
     }
 
-    fn draw_meter(ctx: &Context, width: i32, height: i32, _state: HeadroomState, peak_db: f64) {
+    fn draw_meter(ctx: &Context, width: i32, height: i32, state: HeadroomState, peak_db: f64) {
         let w = width as f64;
         let h = height as f64;
 
@@ -172,31 +193,36 @@ impl HeadroomPanel {
         ctx.rectangle(0.0, 0.0, w, h);
         ctx.fill().unwrap();
 
-        let segment_count = 3.0;
-        let segment_w = w / segment_count;
-        let peak_norm = if peak_db.is_infinite() || peak_db < -100.0 {
-            0.0
-        } else {
-            ((peak_db + 60.0) / 60.0).clamp(0.0, 1.0)
-        };
+        // Segment boundaries come from upstream `headroom_meter_norm`: the axis
+        // spans HEADROOM_METER_MIN_DB..HEADROOM_METER_MAX_DB (-12..+24 dB), with
+        // colour changes at the safe (-3 dB) and risk (0 dB) limits.
+        let segments = [
+            (HEADROOM_METER_MIN_DB, HEADROOM_SAFE_LIMIT_DB, (0.38, 0.78, 0.50)),
+            (HEADROOM_SAFE_LIMIT_DB, HEADROOM_RISK_LIMIT_DB, (0.58, 0.66, 0.76)),
+            (HEADROOM_RISK_LIMIT_DB, HEADROOM_METER_MAX_DB, (1.0, 0.35, 0.28)),
+        ];
 
-        let colors = [(0.2, 0.8, 0.2), (0.9, 0.7, 0.1), (0.95, 0.2, 0.2)];
+        for (left_db, right_db, color) in segments {
+            let left = headroom_meter_norm(left_db) * w;
+            let right = headroom_meter_norm(right_db) * w;
+            ctx.set_source_rgb(color.0, color.1, color.2);
+            ctx.rectangle(left, 0.0, (right - left).max(1.0), h);
+            ctx.fill().unwrap();
+        }
 
-        for i in 0..3 {
-            let x = i as f64 * segment_w;
-            let seg_h = h * peak_norm * segment_count - i as f64;
-            let fill = seg_h > 0.0 && peak_norm > (i as f64 / segment_count);
+        // 0 dBFS reference line.
+        let zero_x = headroom_meter_norm(0.0) * w;
+        ctx.set_source_rgba(0.05, 0.07, 0.10, 0.62);
+        ctx.set_line_width(1.0);
+        ctx.move_to(zero_x, 0.0);
+        ctx.line_to(zero_x, h);
+        ctx.stroke().unwrap();
 
-            if fill {
-                ctx.set_source_rgb(colors[i].0, colors[i].1, colors[i].2);
-                ctx.rectangle(x + 1.0, h - seg_h.min(h), segment_w - 2.0, seg_h.min(h));
-                ctx.fill().unwrap();
-            }
-
-            ctx.set_source_rgba(0.3, 0.3, 0.35, 0.6);
-            ctx.set_line_width(1.0);
-            ctx.rectangle(x, 0.0, segment_w, h);
-            ctx.stroke().unwrap();
+        if state != HeadroomState::Bypass && peak_db.is_finite() {
+            let marker_x = headroom_meter_norm(peak_db) * w;
+            ctx.set_source_rgba(0.96, 0.98, 1.0, 0.98);
+            ctx.arc(marker_x, h / 2.0, 3.2, 0.0, std::f64::consts::TAU);
+            ctx.fill().unwrap();
         }
     }
 }

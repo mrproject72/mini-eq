@@ -9,17 +9,6 @@ use crate::window_utility::UtilityPane;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-/// Calculate the frequency for a given band index using logarithmic spacing.
-fn band_frequency(index: usize) -> f64 {
-    if MAX_BANDS <= 1 {
-        return 1000.0;
-    }
-    let log_min = 20.0_f64.ln();
-    let log_max = 20000.0_f64.ln();
-    let t = index as f64 / (MAX_BANDS - 1) as f64;
-    (log_min + t * (log_max - log_min)).exp()
-}
-
 /// Build the band fader row layout.
 pub fn build_band_faders(
     visible_bands: usize,
@@ -39,14 +28,16 @@ pub fn build_band_faders(
     band_box.set_vexpand(true);
 
     let mut faders = Vec::new();
-    let count = visible_bands.min(MAX_BANDS);
-    for i in 0..count {
-        let frequency = band_frequency(i);
+    let count = visible_bands.clamp(1, MAX_BANDS);
+    // Upstream `compute_log_spaced_band_defaults` derives both frequency and Q
+    // from the band count, so the row spans 20 Hz..20 kHz across `count` bands.
+    let defaults = crate::core::compute_log_spaced_band_defaults(count);
+    for (i, (frequency, q)) in defaults.into_iter().enumerate() {
         let band = WindowBandFader::new(
             i,
             frequency,
             0.0,
-            1.0,
+            q,
             crate::core::FilterType::Off,
             i < DEFAULT_ACTIVE_BANDS,
         );

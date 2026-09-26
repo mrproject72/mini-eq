@@ -4,9 +4,20 @@ use gtk4::cairo::Context;
 use gtk4::prelude::*;
 
 use crate::core::{
-    EQ_FREQUENCY_MAX_HZ, EQ_FREQUENCY_MIN_HZ, EQ_GAIN_MAX_DB, EQ_GAIN_MIN_DB, FilterType,
-    SAMPLE_RATE, total_response_db_at_frequencies,
+    EQ_FREQUENCY_MAX_HZ, EQ_FREQUENCY_MIN_HZ, GRAPH_DB_MAX, GRAPH_DB_MIN, FilterType, SAMPLE_RATE,
+    total_response_db_at_frequencies,
 };
+
+/// Map a dB value to a y pixel, matching upstream `db_to_y`.
+///
+/// The axis spans `GRAPH_DB_MIN..GRAPH_DB_MAX` (±24 dB), not the ±20 dB EQ gain
+/// range, so the curve and the grid lines stay consistent with the Python
+/// original.
+fn db_to_y(db_value: f64, height: f64) -> f64 {
+    let normalized =
+        (db_value.clamp(GRAPH_DB_MIN, GRAPH_DB_MAX) - GRAPH_DB_MIN) / (GRAPH_DB_MAX - GRAPH_DB_MIN);
+    height * (1.0 - normalized)
+}
 
 #[derive(Debug, Clone, Copy)]
 pub enum GraphMode {
@@ -170,13 +181,12 @@ impl EqGraph {
         ctx.paint().unwrap();
 
         let center_y = height / 2.0;
-        let gain_range = EQ_GAIN_MAX_DB - EQ_GAIN_MIN_DB;
 
         ctx.set_source_rgba(0.2, 0.2, 0.2, 0.5);
         ctx.set_line_width(0.5);
 
         for db in [-20, -10, 0, 10, 20].iter() {
-            let y = center_y - (*db as f64 / gain_range) * center_y;
+            let y = db_to_y(*db as f64, height);
             ctx.move_to(0.0, y);
             ctx.line_to(width, y);
             ctx.stroke().unwrap();
@@ -229,7 +239,6 @@ impl EqGraph {
         let width = width as f64;
         let height = height as f64;
         let center_y = height / 2.0;
-        let gain_range = EQ_GAIN_MAX_DB - EQ_GAIN_MIN_DB;
 
         ctx.set_source_rgb(0.0, 0.8, 0.0);
         ctx.set_line_width(2.0);
@@ -247,7 +256,7 @@ impl EqGraph {
             total_response_db_at_frequencies(bands, preamp_db, SAMPLE_RATE, &frequencies);
 
         for (i, &db) in response.iter().enumerate() {
-            let y = center_y - (db / gain_range) * center_y;
+            let y = db_to_y(db, height);
             ctx.line_to(i as f64, y);
         }
         ctx.stroke().unwrap();
@@ -258,7 +267,7 @@ impl EqGraph {
             let x = (band.frequency.log10() - EQ_FREQUENCY_MIN_HZ.log10())
                 / (EQ_FREQUENCY_MAX_HZ.log10() - EQ_FREQUENCY_MIN_HZ.log10())
                 * width;
-            let y = center_y - (band.gain_db / gain_range) * center_y;
+            let y = db_to_y(band.gain_db, height);
 
             ctx.set_source_rgba(1.0, 1.0, 1.0, 0.5);
             ctx.set_line_width(1.0);

@@ -33,21 +33,6 @@ const LIGHT_TICK_MINOR_ALPHA: f64 = 0.32;
 
 const FOCUS_BLUE: (f64, f64, f64) = (0.47, 0.72, 1.0);
 
-const FILTER_TYPE_SHORT_LABELS: &[(&str, &str)] = &[
-    ("Off", "Off"),
-    ("Bell", "Bell"),
-    ("HiPass", "HP"),
-    ("HiShelf", "HS"),
-    ("LoPass", "LP"),
-    ("LoShelf", "LS"),
-    ("Notch", "Notch"),
-    ("Allpass", "AP"),
-    ("Bandpass", "BP"),
-    ("Resonance", "Res"),
-    ("LadderPass", "LdP"),
-    ("LadderRej", "LdR"),
-];
-
 /// A single EQ band fader control.
 pub struct EqBandFader {
     pub container: gtk4::Box,
@@ -462,31 +447,19 @@ fn draw_state_badge(
 }
 
 pub fn filter_type_short_label(ft: FilterType) -> &'static str {
-    let target = FilterType::from_name(filter_type_name(ft));
-    FILTER_TYPE_SHORT_LABELS
-        .iter()
-        .find(|(k, _)| {
-            let candidate = FilterType::from_name(k);
-            std::mem::discriminant(&target) == std::mem::discriminant(&candidate)
-        })
-        .map(|(_, v)| *v)
-        .unwrap_or("")
-}
-
-fn filter_type_name(ft: FilterType) -> &'static str {
     match ft {
         FilterType::Off => "Off",
         FilterType::Bell => "Bell",
-        FilterType::HiPass => "HiPass",
-        FilterType::HiShelf => "HiShelf",
-        FilterType::LoPass => "LoPass",
-        FilterType::LoShelf => "LoShelf",
+        FilterType::HiPass => "HP",
+        FilterType::HiShelf => "HS",
+        FilterType::LoPass => "LP",
+        FilterType::LoShelf => "LS",
         FilterType::Notch => "Notch",
-        FilterType::Resonance => "Resonance",
-        FilterType::Allpass => "Allpass",
-        FilterType::Bandpass => "Bandpass",
-        FilterType::LadderPass => "LadderPass",
-        FilterType::LadderRej => "LadderRej",
+        FilterType::Allpass => "AP",
+        FilterType::Bandpass => "BP",
+        FilterType::Resonance => "Res",
+        FilterType::LadderPass => "LdP",
+        FilterType::LadderRej => "LdR",
     }
 }
 

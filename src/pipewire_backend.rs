@@ -1,24 +1,36 @@
+use std::ffi::CString;
 use std::sync::{Arc, Mutex};
 
 use log::{debug, info, warn};
-use pipewire::{
-    Error, context::ContextRc, core::CoreRc, link::Link, main_loop::MainLoopRc, node::Node,
-    properties::properties, proxy::ProxyT,
-};
+use pipewire::{Error, context::ContextRc, core::CoreRc, main_loop::MainLoopRc};
+use pipewire_sys as pw_sys;
 
-use crate::core::{
-    BiquadCoefficients, EqBand, FILTER_OUTPUT_SUFFIX, FilterType, OUTPUT_CLIENT_NAME, SAMPLE_RATE,
-    VIRTUAL_SINK_BASE, VIRTUAL_SINK_DESCRIPTION,
-};
+use crate::core::{EqBand, FILTER_OUTPUT_SUFFIX, VIRTUAL_SINK_BASE};
+use crate::filter_chain;
 use crate::routing::{OutputRoute, RoutingEngine};
+
+/// Owns a `pw_impl_module` loaded through `pw_context_load_module`.
+///
+/// PipeWire's Rust bindings do not expose module loading, so the handle is kept
+/// as a raw pointer and destroyed on drop.
+struct ModuleHandle(*mut pw_sys::pw_impl_module);
+
+impl Drop for ModuleHandle {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            // SAFETY: the pointer came from `pw_context_load_module` and is
+            // destroyed exactly once.
+            unsafe { pw_sys::pw_impl_module_destroy(self.0) };
+            self.0 = std::ptr::null_mut();
+        }
+    }
+}
 
 pub struct PipeWireBackend {
     mainloop: MainLoopRc,
-    _context: ContextRc,
+    context: ContextRc,
     core: CoreRc,
-    virtual_sink_node: Option<Node>,
-    filter_chain_node: Option<Node>,
-    output_node: Option<Node>,
+    filter_chain_module: Option<ModuleHandle>,
     bands: Vec<EqBand>,
     preamp_gain: f64,
     running: Arc<Mutex<bool>>,
@@ -37,15 +49,13 @@ impl PipeWireBackend {
 
         info!("Connected to PipeWire server");
 
-        let routing = RoutingEngine::new(core.clone());
+        let routing = RoutingEngine::new(core.clone(), mainloop.clone());
 
         let backend = PipeWireBackend {
             mainloop,
-            _context: context,
+            context,
             core,
-            virtual_sink_node: None,
-            filter_chain_node: None,
-            output_node: None,
+            filter_chain_module: None,
             bands,
             preamp_gain: 0.0,
             running: Arc::new(Mutex::new(true)),
@@ -67,240 +77,68 @@ impl PipeWireBackend {
         Ok(())
     }
 
-    pub fn create_virtual_sink(&mut self) -> Result<(), Error> {
-        info!("Creating virtual sink: {}", VIRTUAL_SINK_BASE);
-
-        let sink_name = format!("{}.source", VIRTUAL_SINK_BASE);
-        let sink_props = properties! {
-            *pipewire::keys::MEDIA_TYPE => "Audio",
-            *pipewire::keys::MEDIA_CATEGORY => "Stream",
-            *pipewire::keys::MEDIA_ROLE => "Music",
-            *pipewire::keys::NODE_NAME => sink_name.as_str(),
-            *pipewire::keys::NODE_DESCRIPTION => VIRTUAL_SINK_DESCRIPTION,
-            *pipewire::keys::MEDIA_CLASS => "Audio/Sink",
-            "audio.channels" => "2",
-            "audio.position" => "front-left,front-right",
-            "node.latency" => "25000/48000",
-        };
-
-        let node = self.core.create_object::<Node>("adapter", &sink_props)?;
-
-        self.virtual_sink_node = Some(node);
-        info!("Virtual sink created successfully");
-
-        Ok(())
-    }
-
-    pub fn create_filter_chain(&mut self) -> Result<(), Error> {
-        info!("Creating filter chain for biquad DSP");
-
-        let chain_name = format!("{}_chain", VIRTUAL_SINK_BASE);
-
-        let filter_props = properties! {
-            *pipewire::keys::NODE_NAME => chain_name.as_str(),
-            *pipewire::keys::NODE_DESCRIPTION => "Mini EQ Filter Chain",
-            "filter.chain" => "biquad",
-            "audio.channels" => "2",
-            "audio.rate" => SAMPLE_RATE.to_string().as_str(),
-            "audio.format" => "f32le",
-        };
-
-        let filter_node = self
-            .core
-            .create_object::<Node>("filter-chain", &filter_props)?;
-
-        self.filter_chain_node = Some(filter_node);
-        info!("Filter chain created successfully");
-
-        Ok(())
-    }
-
-    pub fn configure_biquad_filters(&mut self) -> Result<(), Error> {
-        info!("Configuring biquad filters for {} bands", self.bands.len());
-
-        if self.filter_chain_node.is_none() {
-            warn!("No filter chain node configured, creating one first");
-            self.create_filter_chain()?;
-        }
-
-        let node = self.filter_chain_node.as_ref().unwrap();
-
-        for (i, band) in self.bands.iter().enumerate() {
-            if !band.is_effective() {
-                continue;
-            }
-
-            let coeffs = crate::core::band_biquad_coefficients(band, SAMPLE_RATE, false);
-            self.configure_biquad_node(node, i, band, &coeffs)?;
-        }
-
-        info!("Biquad filter configuration complete");
-        Ok(())
-    }
-
-    fn configure_biquad_node(
-        &self,
-        filter_node: &Node,
-        index: usize,
-        band: &EqBand,
-        coeffs: &BiquadCoefficients,
-    ) -> Result<(), Error> {
-        let filter_name = format!("bq_{}_{}", band.filter_type.name().to_lowercase(), index);
-
-        let mut props = properties! {
-            *pipewire::keys::NODE_NAME => filter_name.as_str(),
-            *pipewire::keys::NODE_DESCRIPTION => format!("EQ Band {} {}", index, band.filter_type.name()).as_str(),
-            "biquad.frequency" => band.frequency.to_string().as_str(),
-            "biquad.gain" => band.gain_db.to_string().as_str(),
-            "biquad.q" => band.q.to_string().as_str(),
-            "biquad.type" => band.filter_type.native_label(),
-            "biquad.a0" => coeffs.a0.to_string().as_str(),
-            "biquad.a1" => coeffs.a1.to_string().as_str(),
-            "biquad.a2" => coeffs.a2.to_string().as_str(),
-            "biquad.b0" => coeffs.b0.to_string().as_str(),
-            "biquad.b1" => coeffs.b1.to_string().as_str(),
-            "biquad.b2" => coeffs.b2.to_string().as_str(),
-        };
-
-        if band.enabled && band.filter_type != FilterType::Off {
-            props.insert("biquad.enabled", "true");
-        } else {
-            props.insert("biquad.enabled", "false");
-        }
-
-        let properties: Vec<pipewire::spa::pod::Property> = props
-            .dict()
-            .iter()
-            .filter_map(|(key, value)| {
-                value
-                    .parse::<f64>()
-                    .ok()
-                    .map(|val| pipewire::spa::pod::Property {
-                        key: Self::string_key_to_id(key),
-                        flags: pipewire::spa::pod::PropertyFlags::empty(),
-                        value: pipewire::spa::pod::Value::Double(val),
-                    })
-            })
-            .collect();
-
-        let pod_value = pipewire::spa::pod::Value::Object(pipewire::spa::pod::Object {
-            type_: pipewire::spa::utils::SpaTypes::ObjectParamProps.as_raw(),
-            id: pipewire::spa::param::ParamType::Props.as_raw(),
-            properties,
-        });
-
-        let pod_bytes = pipewire::spa::pod::serialize::PodSerializer::serialize(
-            std::io::Cursor::new(Vec::new()),
-            &pod_value,
+    /// Build the filter-chain argument string for the current bands.
+    pub fn filter_chain_args(&self, output_sink: &str, eq_enabled: bool) -> String {
+        filter_chain::build_filter_chain_module_args(
+            &self.bands,
+            self.preamp_gain,
+            eq_enabled,
+            VIRTUAL_SINK_BASE,
+            &format!("{}{}", VIRTUAL_SINK_BASE, FILTER_OUTPUT_SUFFIX),
+            output_sink,
+            true,
         )
-        .map(|(cursor, _)| cursor.into_inner())
-        .unwrap_or_default();
-
-        let pod = pipewire::spa::pod::Pod::from_bytes(&pod_bytes)
-            .expect("Failed to create Pod from bytes");
-
-        filter_node.set_param(pipewire::spa::param::ParamType::Props, 0, pod);
-
-        debug!(
-            "Configured biquad filter {}: freq={} gain={} q={} type={}",
-            index,
-            band.frequency,
-            band.gain_db,
-            band.q,
-            band.filter_type.name()
-        );
-
-        Ok(())
     }
 
-    fn string_key_to_id(key: &str) -> u32 {
-        let mut hash: u32 = 0;
-        for byte in key.bytes() {
-            hash = hash.wrapping_mul(31).wrapping_add(byte as u32);
-        }
-        hash
-    }
+    /// Load `libpipewire-module-filter-chain`, which creates the virtual sink
+    /// (capture side), the DSP graph and the playback node as a single module.
+    ///
+    /// This replaces the previous per-node `create_object` calls: the
+    /// filter-chain is a module, not an object factory, and the sink/output
+    /// nodes are declared in its `capture.props`/`playback.props` sections.
+    pub fn create_filter_chain(&mut self, output_sink: &str) -> Result<(), Error> {
+        info!("Loading filter-chain module -> {}", output_sink);
 
-    pub fn create_output_node(&mut self) -> Result<(), Error> {
-        info!("Creating output node: {}", OUTPUT_CLIENT_NAME);
+        let args = self.filter_chain_args(output_sink, true);
+        let c_name = CString::new(filter_chain::FILTER_CHAIN_MODULE_NAME)
+            .map_err(|_| Error::CreationFailed)?;
+        let c_args = CString::new(args).map_err(|_| Error::CreationFailed)?;
 
-        let output_name = format!("{}{}", VIRTUAL_SINK_BASE, FILTER_OUTPUT_SUFFIX);
-
-        let output_props = properties! {
-            *pipewire::keys::MEDIA_TYPE => "Audio",
-            *pipewire::keys::MEDIA_CATEGORY => "Stream",
-            *pipewire::keys::MEDIA_ROLE => "Music",
-            *pipewire::keys::NODE_NAME => output_name.as_str(),
-            *pipewire::keys::NODE_DESCRIPTION => OUTPUT_CLIENT_NAME,
-            *pipewire::keys::MEDIA_CLASS => "Audio/Sink",
-            "audio.channels" => "2",
-            "audio.rate" => SAMPLE_RATE.to_string().as_str(),
-            "audio.format" => "f32le",
+        // SAFETY: `self.context` outlives the module (the module is destroyed in
+        // `unload_filter_chain_module` before the context drops), and both
+        // strings are NUL-terminated for the duration of the call.
+        let module = unsafe {
+            pw_sys::pw_context_load_module(
+                self.context.as_raw_ptr(),
+                c_name.as_ptr(),
+                c_args.as_ptr(),
+                std::ptr::null_mut(),
+            )
         };
 
-        let node = self.core.create_object::<Node>("adapter", &output_props)?;
+        if module.is_null() {
+            warn!("pw_context_load_module returned NULL");
+            return Err(Error::CreationFailed);
+        }
 
-        self.output_node = Some(node);
-        info!("Output node created successfully");
-
+        self.filter_chain_module = Some(ModuleHandle(module));
+        info!("Filter-chain module loaded");
         Ok(())
     }
 
-    pub fn link_nodes(&mut self) -> Result<(), Error> {
-        info!("Linking PipeWire nodes");
+    /// Tear down the loaded filter-chain module and its nodes.
+    pub fn unload_filter_chain_module(&mut self) {
+        if let Some(handle) = self.filter_chain_module.take() {
+            // SAFETY: `handle.0` came from `pw_context_load_module` and is
+            // destroyed exactly once, here.
+            unsafe { pw_sys::pw_impl_module_destroy(handle.0) };
+            info!("Filter-chain module unloaded");
+        }
+    }
 
-        let sink_id = self
-            .virtual_sink_node
-            .as_ref()
-            .map(|n| n.upcast_ref().id())
-            .ok_or_else(|| {
-                warn!("Virtual sink node not found for linking");
-                Error::CreationFailed
-            })?;
-        let filter_id = self
-            .filter_chain_node
-            .as_ref()
-            .map(|n| n.upcast_ref().id())
-            .ok_or_else(|| {
-                warn!("Filter chain node not found for linking");
-                Error::CreationFailed
-            })?;
-        let output_id = self
-            .output_node
-            .as_ref()
-            .map(|n| n.upcast_ref().id())
-            .ok_or_else(|| {
-                warn!("Output node not found for linking");
-                Error::CreationFailed
-            })?;
-
-        info!(
-            "Found nodes: sink={}, filter={}, output={}",
-            sink_id, filter_id, output_id
-        );
-
-        let _ = self.core.create_object::<Link>(
-            "link-factory",
-            &properties! {
-                "link.output.port" => "0",
-                "link.input.port" => "0",
-                "link.output.node" => sink_id.to_string().as_str(),
-                "link.input.node" => filter_id.to_string().as_str(),
-            },
-        );
-
-        let _ = self.core.create_object::<Link>(
-            "link-factory",
-            &properties! {
-                "link.output.port" => "0",
-                "link.input.port" => "0",
-                "link.output.node" => filter_id.to_string().as_str(),
-                "link.input.node" => output_id.to_string().as_str(),
-            },
-        );
-
-        info!("Linked sink -> filter_chain -> output");
-        Ok(())
+    /// Native biquad control values for the current bands.
+    pub fn native_control_values(&self, eq_enabled: bool) -> Vec<(String, f64)> {
+        filter_chain::native_biquad_control_values(&self.bands, self.preamp_gain, eq_enabled)
     }
 
     pub fn detect_output_routes(&self) -> Result<Vec<OutputRoute>, Error> {
@@ -311,20 +149,21 @@ impl PipeWireBackend {
         self.routing.auto_route_to_sink(sink_name)
     }
 
-    pub fn update_band_coefficients(&mut self, bands: &[EqBand]) -> Result<(), Error> {
+    /// Update the DSP graph for a new set of bands.
+    ///
+    /// The native filter-chain computes coefficients at the DSP clock rate, so
+    /// live edits are applied by reloading the module with fresh Freq/Q/Gain
+    /// control values rather than by pushing raw coefficients.
+    pub fn update_band_coefficients(
+        &mut self,
+        bands: &[EqBand],
+        output_sink: &str,
+    ) -> Result<(), Error> {
         info!("Updating band coefficients for {} bands", bands.len());
 
-        for band in bands {
-            if !band.is_effective() {
-                continue;
-            }
-            let coeffs = crate::core::band_biquad_coefficients(band, SAMPLE_RATE, false);
-            if let Some(ref node) = self.filter_chain_node {
-                self.configure_biquad_node(node, band.index, band, &coeffs)?;
-            }
-        }
-
-        Ok(())
+        self.bands = bands.to_vec();
+        self.unload_filter_chain_module();
+        self.create_filter_chain(output_sink)
     }
 
     pub fn set_preamp(&mut self, gain_db: f64) -> Result<(), Error> {
@@ -351,6 +190,7 @@ impl PipeWireBackend {
 
     pub fn stop(&mut self) {
         *self.running.lock().unwrap() = false;
+        self.unload_filter_chain_module();
         info!("PipeWire backend stopping");
     }
 

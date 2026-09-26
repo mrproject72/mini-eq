@@ -226,29 +226,61 @@ impl MiniEqWindow {
             let sig_band_faders = band_faders.clone();
             presets.borrow_mut().set_callbacks(
                 Some(Box::new(move |bands, _preamp| {
+                    // Upstream re-syncs every fader from the loaded bands
+                    // (`update_band_fader`), so mute/solo come from the preset
+                    // rather than from the pre-load UI state.
+                    let solo_active = crate::core::bands_have_solo(&bands);
                     for (i, band) in bands.iter().enumerate() {
                         if let Some(fader) = apply_band_faders.get(i) {
-                            let mut f = fader.borrow_mut();
-                            f.gain_db = band
-                                .gain_db
-                                .clamp(crate::core::EQ_GAIN_MIN_DB, crate::core::EQ_GAIN_MAX_DB);
-                            f.frequency = band.frequency.clamp(
+                            let frequency = band.frequency.clamp(
                                 crate::core::EQ_FREQUENCY_MIN_HZ,
                                 crate::core::EQ_FREQUENCY_MAX_HZ,
                             );
-                            f.q_value = band.q.clamp(crate::core::EQ_Q_MIN, crate::core::EQ_Q_MAX);
-                            f.filter_type = band.filter_type;
-                            f.active = band.enabled;
+                            let q = band.q.clamp(crate::core::EQ_Q_MIN, crate::core::EQ_Q_MAX);
+                            let mut f = fader.borrow_mut();
+                            let selected = f.selected;
+                            f.set_band_state(
+                                band.gain_db,
+                                frequency,
+                                crate::window_band_fader::format_frequency_label(frequency),
+                                q,
+                                crate::window_band_fader::format_q_label(q),
+                                band.filter_type,
+                                crate::band_fader::filter_type_short_label(band.filter_type).into(),
+                                selected,
+                                band.enabled,
+                                !band.enabled,
+                                band.solo,
+                                solo_active,
+                            );
                             f.drawing_area.queue_draw();
                         }
                     }
                 })),
                 Some(Box::new(move || {
+                    let defaults =
+                        crate::core::compute_log_spaced_band_defaults(reset_band_faders.len());
                     for (i, fader) in reset_band_faders.iter().enumerate() {
                         let mut f = fader.borrow_mut();
-                        f.gain_db = 0.0;
-                        f.filter_type = crate::core::FilterType::Off;
-                        f.active = i < crate::core::DEFAULT_ACTIVE_BANDS;
+                        let (frequency, q) = defaults.get(i).copied().unwrap_or((1000.0, 1.0));
+                        let (selected, solo_active) = (f.selected, f.solo_active);
+                        f.set_band_state(
+                            0.0,
+                            frequency,
+                            crate::window_band_fader::format_frequency_label(frequency),
+                            q,
+                            crate::window_band_fader::format_q_label(q),
+                            crate::core::FilterType::Off,
+                            crate::band_fader::filter_type_short_label(
+                                crate::core::FilterType::Off,
+                            )
+                            .into(),
+                            selected,
+                            i < crate::core::DEFAULT_ACTIVE_BANDS,
+                            false,
+                            false,
+                            solo_active,
+                        );
                         f.drawing_area.queue_draw();
                     }
                 })),
