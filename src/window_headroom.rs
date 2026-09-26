@@ -290,6 +290,6 @@ mod tests {
         );
         assert_eq!(format_headroom_peak_db(-4.5), "4.5 dB");
         assert_eq!(format_headroom_peak_db(0.0), "+0.0 dB");
-        assert_eq!(format_headroom_peak_db(3.14), "+3.1 dB");
+        assert_eq!(format_headroom_peak_db(2.5), "+2.5 dB");
     }
 }

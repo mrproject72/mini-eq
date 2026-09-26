@@ -477,8 +477,8 @@ mod tests {
             0.0
         );
 
-        // Disabled band -> fully dry.
-        bands[0].enabled = false;
+        // Muted band -> fully dry.
+        bands[0].mute = true;
         let inactive = native_biquad_band_control_values(0, &bands[0], true, false);
         assert_eq!(
             inactive
@@ -498,7 +498,7 @@ mod tests {
         );
 
         // EQ bypassed -> fully dry.
-        bands[0].enabled = true;
+        bands[0].mute = false;
         let bypassed = native_biquad_band_control_values(0, &bands[0], false, false);
         assert_eq!(
             bypassed
@@ -530,7 +530,6 @@ mod tests {
     fn test_coefficients_scaled_for_control_range() {
         // A high-Q bell can exceed the +/-10 control limit.
         let mut band = crate::core::EqBand::new(0);
-        band.enabled = true;
         band.filter_type = FilterType::Bell;
         band.frequency = 1000.0;
         band.gain_db = 20.0;

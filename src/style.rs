@@ -16,6 +16,11 @@ const STYLE_CSS: &str = r#"
     --warning-color: rgb(220, 180, 80);
     --text-muted: rgb(150, 151, 155);
     --toolbar-bg-color: rgb(35, 36, 38);
+    --mini-border-subtle: rgba(255, 255, 255, 0.08);
+    --mini-toggle-checked-color: rgb(255, 255, 255);
+    --mini-toggle-checked-bg: rgb(120, 160, 220);
+    --mini-toggle-checked-border: rgb(140, 180, 240);
+    --mini-text-dim: rgb(150, 151, 155);
 }
 
 .mini-eq-dark {
@@ -90,19 +95,57 @@ const STYLE_CSS: &str = r#"
 }
 
 .band-editor {
-    background-color: var(--panel-bg-color);
+    margin-top: 0;
+    padding: 4px 7px;
     border-radius: 10px;
-    padding: 10px;
+    background-color: var(--panel-bg-color);
+    border: 1px solid var(--mini-border-subtle);
+}
+
+.metric-title {
+    font-size: 9.5pt;
+    font-weight: 700;
+    letter-spacing: 0;
+    color: var(--mini-text-dim);
+}
+
+.band-editor-title {
+    color: var(--window-fg-color);
+    font-size: 9.5pt;
+    font-weight: 800;
 }
 
 .band-editor-selected {
-    border-color: var(--accent-color);
+    min-width: 88px;
+}
+
+.band-editor-state {
+    padding: 0 2px;
 }
 
 .band-editor-field {
-    background-color: var(--panel-bg-color);
-    border-radius: 8px;
-    padding: 6px 10px;
+    margin-left: 2px;
+}
+
+.band-editor-input {
+    min-height: 32px;
+}
+
+.band-editor-toggle {
+    min-width: 34px;
+    min-height: 34px;
+    padding: 0;
+    border-radius: 9px;
+    font-weight: 800;
+    color: var(--window-fg-color);
+    background-color: rgba(128, 128, 128, 0.12);
+    border: 1px solid var(--mini-border-subtle);
+}
+
+.band-editor-toggle:checked {
+    color: var(--mini-toggle-checked-color);
+    background-color: var(--mini-toggle-checked-bg);
+    border-color: var(--mini-toggle-checked-border);
 }
 
 .utility-section {

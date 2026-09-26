@@ -45,7 +45,28 @@ pub const EQ_MODES: [&str; 1] = ["Live PipeWire"];
 // fields persisted by the Python original use this value.
 pub const EQ_MODE_APO: i32 = 6;
 
-pub const FILTER_TYPE_INDEX_BY_VALUE: &[usize] = &[0, 1, 2, 3, 4, 5, 6, 7, 8];
+/// Combo-box index for a selectable filter type, mirroring upstream
+/// `FILTER_TYPE_INDEX_BY_VALUE`.
+///
+/// This is *not* the enum discriminant: `Resonance` (7) is absent from
+/// `SELECTABLE_FILTER_TYPES`, so the higher values shift down (`Allpass` 8 -> 7,
+/// `Bandpass` 9 -> 8). Indexing a table by discriminant would mis-select
+/// `Allpass` and run off the end for `Bandpass`.
+pub fn filter_type_combo_index(filter_type: FilterType) -> usize {
+    SELECTABLE_FILTER_TYPES
+        .iter()
+        .position(|candidate| *candidate == filter_type)
+        .unwrap_or(0)
+}
+
+/// Inverse of [`filter_type_combo_index`].
+pub fn filter_type_from_combo_index(index: usize) -> FilterType {
+    SELECTABLE_FILTER_TYPES
+        .get(index)
+        .copied()
+        .unwrap_or(FilterType::Off)
+}
+
 pub const MODE_ORDER: [&str; 1] = ["Live PipeWire"];
 pub const MODE_INDEX_BY_VALUE: &[usize] = &[0];
 
@@ -210,6 +231,8 @@ pub const EQ_GAIN_MIN_DB: f64 = -20.0;
 pub const EQ_GAIN_MAX_DB: f64 = 20.0;
 pub const EQ_Q_MIN: f64 = 0.18248;
 pub const EQ_Q_MAX: f64 = 6.0;
+/// Upstream `DEFAULT_BAND_Q = 1.0 / math.sqrt(2.0)`.
+pub const DEFAULT_BAND_Q: f64 = std::f64::consts::FRAC_1_SQRT_2;
 pub const EQ_PREAMP_MIN_DB: f64 = -24.0;
 pub const EQ_PREAMP_MAX_DB: f64 = 6.0;
 
@@ -300,7 +323,7 @@ pub struct EqBand {
     pub gain_db: f64,
     pub q: f64,
     pub filter_type: FilterType,
-    pub enabled: bool,
+    pub mute: bool,
     pub solo: bool,
     pub coefficients: BiquadCoefficients,
 }
@@ -313,14 +336,14 @@ impl EqBand {
             gain_db: 0.0,
             q: 1.0,
             filter_type: FilterType::Off,
-            enabled: false,
+            mute: false,
             solo: false,
             coefficients: BiquadCoefficients::identity(),
         }
     }
 
     pub fn is_effective(&self) -> bool {
-        self.enabled && self.filter_type != FilterType::Off
+        !self.mute && self.filter_type != FilterType::Off
     }
 }
 
@@ -473,7 +496,7 @@ pub fn db_to_linear(value_db: f64) -> f64 {
 }
 
 pub fn band_is_effective(band: &EqBand, solo_active: bool) -> bool {
-    band.enabled && band.filter_type != FilterType::Off && (!solo_active || band.solo)
+    !band.mute && band.filter_type != FilterType::Off && (!solo_active || band.solo)
 }
 
 impl FilterType {
@@ -664,7 +687,6 @@ pub fn inactive_eq_bands() -> Vec<EqBand> {
             band.gain_db = 0.0;
             band.q = q_value;
             band.filter_type = FilterType::Off;
-            band.enabled = false;
             band.coefficients = BiquadCoefficients::identity();
             band
         })
@@ -684,7 +706,6 @@ pub fn default_bands() -> Vec<EqBand> {
             band.filter_type = FilterType::Bell;
             band.frequency = frequency;
             band.q = q_value;
-            band.enabled = true;
         }
     }
 
@@ -697,9 +718,7 @@ pub fn eq_band_to_dict(band: &EqBand) -> serde_json::Value {
         "frequency": band.frequency,
         "gain_db": band.gain_db,
         "q": band.q,
-        // Upstream stores the inverse of `enabled` as `mute`, so presets remain
-        // interchangeable with the Python original.
-        "mute": !band.enabled,
+        "mute": band.mute,
         "solo": band.solo,
     })
 }
@@ -727,15 +746,15 @@ pub fn eq_band_from_dict(data: &serde_json::Value, fallback: &EqBand) -> EqBand 
         filter_type = FilterType::Off;
     }
 
-    // Upstream persists `mute`; `enabled` is accepted for presets written by
-    // earlier builds of this port.
-    let enabled = match (
+    // Upstream persists `mute`; `enabled` is still accepted (inverted) for
+    // presets written by earlier builds of this port.
+    let mute = match (
         data.get("mute").and_then(|v| v.as_bool()),
         data.get("enabled").and_then(|v| v.as_bool()),
     ) {
-        (Some(mute), _) => !mute,
-        (None, Some(enabled)) => enabled,
-        (None, None) => fallback.enabled,
+        (Some(mute), _) => mute,
+        (None, Some(enabled)) => !enabled,
+        (None, None) => fallback.mute,
     };
 
     EqBand {
@@ -756,7 +775,7 @@ pub fn eq_band_from_dict(data: &serde_json::Value, fallback: &EqBand) -> EqBand 
             .unwrap_or(fallback.q)
             .clamp(EQ_Q_MIN, EQ_Q_MAX),
         filter_type,
-        enabled,
+        mute,
         solo: data
             .get("solo")
             .and_then(|v| v.as_bool())
@@ -1143,7 +1162,6 @@ mod tests {
 
         for (filter_type, expected) in cases {
             let mut band = EqBand::new(0);
-            band.enabled = true;
             band.filter_type = filter_type;
             band.frequency = 1000.0;
             band.gain_db = 6.0;
@@ -1169,7 +1187,6 @@ mod tests {
         // Bell @ 1 kHz, +6 dB, Q=1, 48 kHz — computed from the upstream Python
         // `band_biquad_coefficients` formula; values are a0-normalised.
         let mut band = EqBand::new(0);
-        band.enabled = true;
         band.filter_type = FilterType::Bell;
         band.frequency = 1000.0;
         band.gain_db = 6.0;
@@ -1200,7 +1217,6 @@ mod tests {
         // Upstream clamps centre to `min(20000, sample_rate/2 - 1)`, so at an
         // 8 kHz sample rate a 20 kHz request must land at 3999 Hz, not 20000.
         let mut band = EqBand::new(0);
-        band.enabled = true;
         band.filter_type = FilterType::Bell;
         band.frequency = 20000.0;
         band.gain_db = 6.0;
@@ -1223,7 +1239,6 @@ mod tests {
         // Upstream uses `max(band.q, 0.0001)`; a Q below the UI minimum must not
         // be raised to EQ_Q_MIN.
         let mut band = EqBand::new(0);
-        band.enabled = true;
         band.filter_type = FilterType::Bell;
         band.frequency = 1000.0;
         band.gain_db = 6.0;
@@ -1252,8 +1267,11 @@ mod tests {
                 .count(),
             DEFAULT_ACTIVE_BANDS
         );
-        assert!(bands[..DEFAULT_ACTIVE_BANDS].iter().all(|b| b.enabled));
-        assert!(bands[DEFAULT_ACTIVE_BANDS..].iter().all(|b| !b.enabled));
+        assert!(
+            bands[..DEFAULT_ACTIVE_BANDS]
+                .iter()
+                .all(|b| b.filter_type == FilterType::Bell && !b.mute)
+        );
         assert!(
             bands[DEFAULT_ACTIVE_BANDS..]
                 .iter()
@@ -1268,7 +1286,7 @@ mod tests {
         band.gain_db = 6.0;
         band.q = 1.0;
         band.filter_type = FilterType::Bell;
-        band.enabled = true;
+        band.mute = false;
         let coeffs = band_biquad_coefficients(&band, SAMPLE_RATE, false);
         assert!(!coeffs.is_identity());
     }
@@ -1278,6 +1296,36 @@ mod tests {
         assert_eq!(FilterType::Bell.name(), "Bell");
         assert_eq!(FilterType::HiPass.name(), "Hi-pass");
         assert_eq!(FilterType::LoPass.name(), "Lo-pass");
+    }
+
+    /// Pins the combo index mapping to upstream `FILTER_TYPE_INDEX_BY_VALUE`,
+    /// which is keyed by filter-type *value* rather than by enum position:
+    /// `Resonance` (7) is not selectable, so `Allpass` and `Bandpass` shift down.
+    #[test]
+    fn test_filter_type_combo_index_matches_upstream() {
+        let expected = [
+            (FilterType::Off, 0),
+            (FilterType::Bell, 1),
+            (FilterType::HiPass, 2),
+            (FilterType::HiShelf, 3),
+            (FilterType::LoPass, 4),
+            (FilterType::LoShelf, 5),
+            (FilterType::Notch, 6),
+            (FilterType::Allpass, 7),
+            (FilterType::Bandpass, 8),
+        ];
+        for (filter_type, index) in expected {
+            assert_eq!(filter_type_combo_index(filter_type), index);
+            assert_eq!(filter_type_from_combo_index(index), filter_type);
+        }
+    }
+
+    /// `Resonance` is not selectable upstream, so it must not resolve to a combo
+    /// index rather than silently landing on a neighbouring type.
+    #[test]
+    fn test_unselectable_filter_type_falls_back_to_off() {
+        assert_eq!(filter_type_combo_index(FilterType::Resonance), 0);
+        assert_eq!(filter_type_from_combo_index(99), FilterType::Off);
     }
 
     #[test]
@@ -1302,7 +1350,7 @@ mod tests {
     #[test]
     fn test_total_response_db_with_bell() {
         let mut bands = default_bands();
-        bands[0].enabled = true;
+        bands[0].mute = false;
         bands[0].filter_type = FilterType::Bell;
         bands[0].frequency = 1000.0;
         bands[0].gain_db = 6.0;
@@ -1324,9 +1372,8 @@ mod tests {
         // 12.0 for this input; the log sweep alone yields 11.818651.
         let mut bands = default_bands();
         for band in bands.iter_mut() {
-            band.enabled = false;
+            band.filter_type = FilterType::Off;
         }
-        bands[0].enabled = true;
         bands[0].filter_type = FilterType::Bell;
         bands[0].frequency = 1000.0;
         bands[0].gain_db = 12.0;
@@ -1392,7 +1439,7 @@ mod tests {
         let (preamp, bands) = load_preset_from_file(&path).unwrap();
         assert_eq!(preamp, -2.0);
         assert_eq!(bands[0].filter_type, FilterType::Bell);
-        assert!(bands[0].enabled);
+        assert!(!bands[0].mute);
 
         // A preset from a newer build is rejected.
         let newer = dir.join("newer.json");
@@ -1443,14 +1490,29 @@ mod tests {
     #[test]
     fn test_band_dict_uses_upstream_mute_key() {
         let mut band = EqBand::new(0);
-        band.enabled = false;
+        band.mute = true;
         let dict = eq_band_to_dict(&band);
         assert_eq!(dict.get("mute").and_then(|v| v.as_bool()), Some(true));
         assert!(dict.get("enabled").is_none());
 
-        band.enabled = true;
+        band.mute = false;
         let dict = eq_band_to_dict(&band);
         assert_eq!(dict.get("mute").and_then(|v| v.as_bool()), Some(false));
+    }
+
+    /// A muted band must survive a save/load cycle. Modelling `mute` as the
+    /// inverse of a single "enabled" flag lost it, because `Off` bands and
+    /// muted bands both serialised to the same value.
+    #[test]
+    fn test_muted_band_roundtrips_through_preset() {
+        let mut bands = default_bands();
+        bands[0].filter_type = FilterType::Bell;
+        bands[0].mute = true;
+
+        let payload = preset_payload(&bands, 0.0);
+        let parsed = preset_payload_bands(&payload).unwrap();
+        assert!(parsed[0].mute);
+        assert_eq!(parsed[0].filter_type, FilterType::Bell);
     }
 
     #[test]
@@ -1463,7 +1525,7 @@ mod tests {
             "q": 1.0, "mute": true, "solo": false,
         });
         let band = eq_band_from_dict(&upstream, &fallback);
-        assert!(!band.enabled);
+        assert!(band.mute);
         assert_eq!(band.filter_type, FilterType::Bell);
 
         // Resonance (7) is not a selectable type upstream -> coerced to Off.
@@ -1473,9 +1535,11 @@ mod tests {
         let band = eq_band_from_dict(&unsupported, &fallback);
         assert_eq!(band.filter_type, FilterType::Off);
 
-        // `enabled` from presets written by this port still loads.
+        // `enabled` from presets written by this port still loads, inverted.
         let legacy = serde_json::json!({ "enabled": true, "filter_type": 1 });
-        assert!(eq_band_from_dict(&legacy, &fallback).enabled);
+        assert!(!eq_band_from_dict(&legacy, &fallback).mute);
+        let legacy = serde_json::json!({ "enabled": false, "filter_type": 1 });
+        assert!(eq_band_from_dict(&legacy, &fallback).mute);
     }
 
     #[test]
@@ -1485,7 +1549,6 @@ mod tests {
         let bands: Vec<EqBand> = (0..MAX_BANDS)
             .map(|index| {
                 let mut band = EqBand::new(index);
-                band.enabled = true;
                 band.filter_type = FilterType::Bell;
                 band.gain_db = 1.5;
                 band
@@ -1532,7 +1595,7 @@ mod tests {
                 q
             );
             assert_eq!(band.filter_type, FilterType::Bell);
-            assert!(band.enabled);
+            assert!(!band.mute);
         }
     }
 

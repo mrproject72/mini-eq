@@ -55,63 +55,10 @@ pub fn build_band_faders(
     (scrolled, faders)
 }
 
-/// Build the shared selected-band editor.
-pub fn build_band_editor() -> gtk4::Box {
-    let editor = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
-    editor.set_css_classes(&["band-editor"]);
-
-    let mute_toggle = gtk4::ToggleButton::with_label("Mute");
-    let solo_toggle = gtk4::ToggleButton::with_label("Solo");
-
-    let type_label = gtk4::Label::new(Some("Type"));
-    let type_combo = gtk4::ComboBoxText::new();
-    for ft in crate::core::SELECTABLE_FILTER_TYPES.iter() {
-        type_combo.append_text(crate::band_fader::filter_type_short_label(*ft));
-    }
-
-    let freq_adj = gtk4::Adjustment::new(
-        1000.0,
-        crate::core::EQ_FREQUENCY_MIN_HZ,
-        crate::core::EQ_FREQUENCY_MAX_HZ,
-        10.0,
-        100.0,
-        0.0,
-    );
-    let freq_spin = gtk4::SpinButton::new(Some(&freq_adj), 10.0, 0);
-    freq_spin.set_digits(0);
-    freq_spin.set_width_chars(7);
-
-    let q_adj = gtk4::Adjustment::new(1.0, 0.1, 10.0, 0.1, 0.5, 0.0);
-    let q_spin = gtk4::SpinButton::new(Some(&q_adj), 0.1, 1);
-    q_spin.set_digits(2);
-    q_spin.set_width_chars(5);
-
-    let gain_adj = gtk4::Adjustment::new(
-        0.0,
-        crate::core::EQ_GAIN_MIN_DB,
-        crate::core::EQ_GAIN_MAX_DB,
-        0.5,
-        1.0,
-        0.0,
-    );
-    let gain_spin = gtk4::SpinButton::new(Some(&gain_adj), 0.5, 1);
-    gain_spin.set_digits(1);
-    gain_spin.set_width_chars(6);
-
-    editor.append(&mute_toggle);
-    editor.append(&solo_toggle);
-    editor.append(&type_label);
-    editor.append(&type_combo);
-    editor.append(&freq_spin);
-    editor.append(&q_spin);
-    editor.append(&gain_spin);
-
-    editor
-}
-
 /// Build the main content layout with left panel (band faders) and right panel (utility).
 pub fn build_main_layout(
     utility: &UtilityPane,
+    editor: &crate::window_band_editor::BandEditor,
     visible_bands: usize,
     selection_changed_callback: Rc<dyn Fn(usize)>,
 ) -> (
@@ -126,8 +73,7 @@ pub fn build_main_layout(
     let (band_scrolled, faders) = build_band_faders(visible_bands, selection_changed_callback);
     main_box.append(&band_scrolled);
 
-    let band_editor = build_band_editor();
-    main_box.append(&band_editor);
+    main_box.append(editor.widget());
 
     let split_view = adw::OverlaySplitView::new();
     split_view.set_content(Some(&main_box));

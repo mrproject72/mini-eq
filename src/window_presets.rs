@@ -465,7 +465,7 @@ impl PresetPanel {
         self.current_preamp_db = preamp_db;
         let mut labels = Vec::new();
         for band in bands.iter().take(10) {
-            if band.enabled && band.filter_type != crate::core::FilterType::Off {
+            if !band.mute && band.filter_type != crate::core::FilterType::Off {
                 labels.push(format!(
                     "{} {}dB",
                     format_frequency(band.frequency),

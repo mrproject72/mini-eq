@@ -9,10 +9,37 @@ use glib::ControlFlow;
 
 use crate::appearance::{AppearancePreference, apply_appearance_preference};
 use crate::style;
+use crate::window_band_editor::{BandEditor, BandEditorCallbacks};
 use crate::window_layout;
 use crate::window_state;
 use crate::window_utility::UtilityPane;
 use crate::window_utils;
+
+/// Apply `edit` to the fader at `index`, redrawing it when it exists.
+fn edit_fader(
+    registry: &Rc<RefCell<Vec<Rc<RefCell<crate::band_fader::EqBandFader>>>>>,
+    index: usize,
+    edit: impl FnOnce(&mut crate::band_fader::EqBandFader),
+) {
+    let Some(fader) = registry.borrow().get(index).cloned() else {
+        return;
+    };
+    edit(&mut fader.borrow_mut());
+    fader.borrow().drawing_area.queue_draw();
+}
+
+/// Mirror `solo_active` onto every fader: upstream computes it once from the
+/// whole band list (`bands_have_solo`) and hands it to each `set_band_state`.
+fn recompute_solo_active(faders: &[Rc<RefCell<crate::band_fader::EqBandFader>>]) {
+    let solo_active = faders.iter().any(|fader| fader.borrow().soloed);
+    for fader in faders.iter() {
+        let mut fader = fader.borrow_mut();
+        if fader.solo_active != solo_active {
+            fader.solo_active = solo_active;
+            fader.drawing_area.queue_draw();
+        }
+    }
+}
 
 /// Main application window.
 pub struct MiniEqWindow {
@@ -85,9 +112,31 @@ impl MiniEqWindow {
         // the layout is built, so the closure captures an empty cell for now.
         let fader_registry: Rc<RefCell<Vec<Rc<RefCell<crate::band_fader::EqBandFader>>>>> =
             Rc::new(RefCell::new(Vec::new()));
+        // Filled once the editor exists; the callbacks below are created first
+        // so they can be handed to the editor's constructor.
+        let editor_cell: Rc<RefCell<Option<Rc<BandEditor>>>> = Rc::new(RefCell::new(None));
+        let refresh_editor: Rc<dyn Fn()> = {
+            let editor_cell = editor_cell.clone();
+            let registry = fader_registry.clone();
+            Rc::new(move || {
+                let Some(editor) = editor_cell.borrow().clone() else {
+                    return;
+                };
+                let selected = registry
+                    .borrow()
+                    .iter()
+                    .find(|fader| fader.borrow().selected)
+                    .cloned();
+                match selected {
+                    Some(fader) => editor.refresh(Some(&fader.borrow())),
+                    None => editor.refresh(None),
+                }
+            })
+        };
         let selection_callback = {
             let registry = fader_registry.clone();
             let graph = utility.graph.clone();
+            let refresh = refresh_editor.clone();
             Rc::new(move |index: usize| {
                 for fader in registry.borrow().iter() {
                     let mut f = fader.borrow_mut();
@@ -98,14 +147,93 @@ impl MiniEqWindow {
                     }
                 }
                 graph.borrow_mut().set_selected_band(Some(index));
+                refresh();
             }) as Rc<dyn Fn(usize)>
         };
+
+        let band_editor = Rc::new(BandEditor::new(BandEditorCallbacks {
+            frequency_changed: {
+                let registry = fader_registry.clone();
+                let refresh = refresh_editor.clone();
+                Box::new(move |index, frequency| {
+                    edit_fader(&registry, index, |fader| {
+                        let clamped = frequency.clamp(
+                            crate::core::EQ_FREQUENCY_MIN_HZ,
+                            crate::core::EQ_FREQUENCY_MAX_HZ,
+                        );
+                        fader.frequency = clamped;
+                        fader.frequency_label =
+                            crate::window_band_fader::format_frequency_label(clamped);
+                    });
+                    refresh();
+                })
+            },
+            q_changed: {
+                let registry = fader_registry.clone();
+                let refresh = refresh_editor.clone();
+                Box::new(move |index, q| {
+                    edit_fader(&registry, index, |fader| {
+                        let clamped = q.clamp(crate::core::EQ_Q_MIN, crate::core::EQ_Q_MAX);
+                        fader.q_value = clamped;
+                        fader.q_label = crate::window_band_fader::format_q_label(clamped);
+                    });
+                    refresh();
+                })
+            },
+            gain_changed: {
+                let registry = fader_registry.clone();
+                let refresh = refresh_editor.clone();
+                Box::new(move |index, gain_db| {
+                    edit_fader(&registry, index, |fader| {
+                        fader.gain_db =
+                            gain_db.clamp(crate::core::EQ_GAIN_MIN_DB, crate::core::EQ_GAIN_MAX_DB);
+                    });
+                    refresh();
+                })
+            },
+            filter_type_changed: {
+                let registry = fader_registry.clone();
+                let refresh = refresh_editor.clone();
+                Box::new(move |index, filter_type| {
+                    edit_fader(&registry, index, |fader| {
+                        fader.filter_type = filter_type;
+                        fader.filter_type_label =
+                            crate::band_fader::filter_type_short_label(filter_type).into();
+                        // Upstream `update_band_fader` derives `active` from the
+                        // filter type, so selecting `Off` dims the fader.
+                        fader.active = filter_type != crate::core::FilterType::Off;
+                    });
+                    refresh();
+                })
+            },
+            mute_changed: {
+                let registry = fader_registry.clone();
+                let refresh = refresh_editor.clone();
+                Box::new(move |index, muted| {
+                    edit_fader(&registry, index, |fader| fader.muted = muted);
+                    refresh();
+                })
+            },
+            solo_changed: {
+                let registry = fader_registry.clone();
+                let refresh = refresh_editor.clone();
+                Box::new(move |index, soloed| {
+                    edit_fader(&registry, index, |fader| fader.soloed = soloed);
+                    recompute_solo_active(&registry.borrow());
+                    refresh();
+                })
+            },
+        }));
+        *editor_cell.borrow_mut() = Some(band_editor.clone());
+
         let (split_view, band_scrolled, band_faders) = window_layout::build_main_layout(
             &utility,
+            &band_editor,
             crate::core::DEFAULT_ACTIVE_BANDS,
             selection_callback,
         );
         *fader_registry.borrow_mut() = band_faders.clone();
+        refresh_editor();
         let split_view = Rc::new(RefCell::new(split_view));
 
         // Build toolbar view
@@ -240,7 +368,7 @@ impl MiniEqWindow {
                             gain_db: fader.gain_db,
                             q: fader.q_value,
                             filter_type: fader.filter_type,
-                            enabled: fader.active,
+                            mute: fader.muted,
                             solo: fader.soloed,
                             coefficients: crate::core::BiquadCoefficients::identity(),
                         }
@@ -276,7 +404,7 @@ impl MiniEqWindow {
                                 gain_db: fader.gain_db,
                                 q: fader.q_value,
                                 filter_type: fader.filter_type,
-                                enabled: fader.active,
+                                mute: fader.muted,
                                 solo: fader.soloed,
                                 coefficients: crate::core::BiquadCoefficients::identity(),
                             }
@@ -304,8 +432,10 @@ impl MiniEqWindow {
             );
             let apply_band_faders = band_faders.clone();
             let apply_headroom = utility.headroom.clone();
+            let apply_refresh = refresh_editor.clone();
             let reset_band_faders = band_faders.clone();
             let reset_headroom = utility.headroom.clone();
+            let reset_refresh = refresh_editor.clone();
             let sig_band_faders = band_faders.clone();
             let sig_headroom = utility.headroom.clone();
             presets.borrow_mut().set_callbacks(
@@ -333,14 +463,16 @@ impl MiniEqWindow {
                                 band.filter_type,
                                 crate::band_fader::filter_type_short_label(band.filter_type).into(),
                                 selected,
-                                band.enabled,
-                                !band.enabled,
+                                band.filter_type != crate::core::FilterType::Off,
+                                band.mute,
                                 band.solo,
                                 solo_active,
                             );
                             f.drawing_area.queue_draw();
                         }
                     }
+                    recompute_solo_active(&apply_band_faders);
+                    apply_refresh();
                 })),
                 Some(Box::new(move || {
                     let defaults =
@@ -350,7 +482,7 @@ impl MiniEqWindow {
                     for (i, fader) in reset_band_faders.iter().enumerate() {
                         let mut f = fader.borrow_mut();
                         let (frequency, q) = defaults.get(i).copied().unwrap_or((1000.0, 1.0));
-                        let (selected, solo_active) = (f.selected, f.solo_active);
+                        let selected = f.selected;
                         f.set_band_state(
                             0.0,
                             frequency,
@@ -366,10 +498,11 @@ impl MiniEqWindow {
                             i < crate::core::DEFAULT_ACTIVE_BANDS,
                             false,
                             false,
-                            solo_active,
+                            false,
                         );
                         f.drawing_area.queue_draw();
                     }
+                    reset_refresh();
                 })),
                 Some(Box::new(move || {
                     let bands: Vec<crate::core::EqBand> = sig_band_faders
@@ -382,7 +515,7 @@ impl MiniEqWindow {
                                 gain_db: fader.gain_db,
                                 q: fader.q_value,
                                 filter_type: fader.filter_type,
-                                enabled: fader.active,
+                                mute: fader.muted,
                                 solo: fader.soloed,
                                 coefficients: crate::core::BiquadCoefficients::identity(),
                             }

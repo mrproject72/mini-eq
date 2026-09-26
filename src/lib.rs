@@ -22,6 +22,7 @@ pub mod style;
 pub mod window;
 pub mod window_analyzer;
 pub mod window_autoeq;
+pub mod window_band_editor;
 pub mod window_band_fader;
 pub mod window_graph;
 pub mod window_headroom;

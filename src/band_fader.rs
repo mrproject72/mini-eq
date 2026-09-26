@@ -274,7 +274,7 @@ impl EqBandFader {
                         if let Some(cb) = select {
                             cb(index);
                         }
-                        return glib::Propagation::Proceed;
+                        glib::Propagation::Proceed
                     }
                     gtk4::gdk::Key::Return | gtk4::gdk::Key::KP_Enter | gtk4::gdk::Key::space => {
                         let (index, select) = (f.index, f.selection_changed_callback.clone());
@@ -282,9 +282,9 @@ impl EqBandFader {
                         if let Some(cb) = select {
                             cb(index);
                         }
-                        return glib::Propagation::Proceed;
+                        glib::Propagation::Proceed
                     }
-                    _ => return glib::Propagation::Proceed,
+                    _ => glib::Propagation::Proceed,
                 }
             });
             fader.borrow().drawing_area.add_controller(key);
