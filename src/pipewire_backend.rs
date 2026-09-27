@@ -165,9 +165,12 @@ impl PipeWireBackend {
                         ParamType::Props.as_raw(),
                     )
                     .map_err(|_| Error::CreationFailed)?;
-                // SPA_Props_params == 0x80000 (SPA StartOther base + Params).
+                // SPA_Props_params == 0x80001 (524289), confirmed via
+                // `pw-cli set-param` echo: `Props:params (524289)`. Using
+                // 0x80000 makes filter-graph's parse_params never find the
+                // control values (silent EQ).
                 builder
-                    .add_prop(0x80000, 0)
+                    .add_prop(0x80001, 0)
                     .map_err(|_| Error::CreationFailed)?;
                 builder
                     .push_struct(&mut struct_frame)
