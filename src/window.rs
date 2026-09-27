@@ -390,6 +390,25 @@ impl MiniEqWindow {
                         }
                     })
                     .collect();
+                // Auto-Safe: continuously clamp the preamp so the curve peak
+                // stays under the target. Runs before reading `preamp_db` so
+                // the graph, the meter and the backend push all see the
+                // adjusted value. Sliding the EQ up auto-lowers the preamp;
+                // sliding down lets it rise back toward 0.
+                if headroom.borrow().auto_safe_enabled() {
+                    let raw_peak = crate::core::estimate_response_peak_db(
+                        &bands,
+                        0.0,
+                        crate::core::SAMPLE_RATE,
+                    );
+                    let desired = crate::window_headroom::auto_safe_preamp_db(
+                        raw_peak,
+                        crate::window_headroom::AUTO_SAFE_TARGET_DBFS,
+                    );
+                    if (desired - headroom.borrow().preamp_value()).abs() > 0.05 {
+                        headroom.borrow_mut().set_preamp_value(desired);
+                    }
+                }
                 let preamp_db = headroom.borrow().preamp_value();
                 {
                     // Overlay reflects the *selected* band's actual controls,

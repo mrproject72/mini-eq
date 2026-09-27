@@ -12,6 +12,22 @@ pub const HEADROOM_METER_MAX_DB: f64 = 24.0;
 pub const HEADROOM_SAFE_LIMIT_DB: f64 = -3.0;
 pub const HEADROOM_RISK_LIMIT_DB: f64 = 0.0;
 
+/// Target output peak (dBFS) that Auto-Safe keeps the curve under. Matches the
+/// one-shot "Set Safe" margin (`peak + 1.0` ⇒ peak lands at −1 dBFS).
+pub const AUTO_SAFE_TARGET_DBFS: f64 = -1.0;
+
+/// Compute the preamp that keeps the EQ curve's peak at or below
+/// `target_dbfs`, never boosting above 0 dB. `raw_peak_db` is the curve peak
+/// with preamp = 0. This is the continuous form of the one-shot "Set Safe":
+/// sliding the EQ up auto-lowers the preamp; sliding it down lets the preamp
+/// rise back toward 0 (but never above).
+pub fn auto_safe_preamp_db(raw_peak_db: f64, target_dbfs: f64) -> f64 {
+    if !raw_peak_db.is_finite() {
+        return 0.0;
+    }
+    (target_dbfs - raw_peak_db).clamp(crate::core::EQ_PREAMP_MIN_DB, 0.0)
+}
+
 /// Position of `value_db` along the meter, in `0.0..=1.0`.
 pub fn headroom_meter_norm(value_db: f64) -> f64 {
     let span = HEADROOM_METER_MAX_DB - HEADROOM_METER_MIN_DB;
@@ -58,6 +74,8 @@ pub struct HeadroomPanel {
     pub meter_area: gtk4::DrawingArea,
     pub detail_label: gtk4::Label,
     pub set_safe_button: gtk4::Button,
+    pub auto_safe_switch: gtk4::Switch,
+    pub auto_safe: Rc<std::cell::Cell<bool>>,
     pub state: Rc<RefCell<HeadroomState>>,
     pub peak_value: Rc<RefCell<f64>>,
 }
@@ -87,6 +105,24 @@ impl HeadroomPanel {
         let set_safe_button = gtk4::Button::with_label("Set Safe");
         set_safe_button.set_visible(false);
 
+        let auto_safe_switch = gtk4::Switch::new();
+        auto_safe_switch.set_valign(gtk4::Align::Center);
+        auto_safe_switch.set_tooltip_text(Some(
+            "Automatically keep the output peak under -1 dBFS as you adjust the EQ",
+        ));
+        let auto_safe = Rc::new(std::cell::Cell::new(false));
+        {
+            let auto_safe = auto_safe.clone();
+            let preamp_spin = preamp_spin.clone();
+            auto_safe_switch.connect_state_set(move |_sw, on| {
+                auto_safe.set(on);
+                // The auto algorithm owns the preamp while enabled, so the
+                // manual control is disabled to avoid fighting it.
+                preamp_spin.set_sensitive(!on);
+                glib::Propagation::Proceed
+            });
+        }
+
         let container = gtk4::Box::new(gtk4::Orientation::Vertical, 6);
         container.set_css_classes(&["headroom-panel-safe"]);
         container.set_margin_bottom(8);
@@ -104,6 +140,13 @@ impl HeadroomPanel {
         preamp_box.append(&preamp_label);
         preamp_box.append(&preamp_spin);
         container.append(&preamp_box);
+
+        let auto_safe_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+        let auto_safe_label = gtk4::Label::new(Some("Auto-Safe"));
+        auto_safe_box.append(&auto_safe_label);
+        auto_safe_box.append(&auto_safe_switch);
+        auto_safe_box.set_halign(gtk4::Align::Start);
+        container.append(&auto_safe_box);
 
         container.append(&peak_label);
         container.append(&meter_area);
@@ -132,6 +175,8 @@ impl HeadroomPanel {
             meter_area,
             detail_label,
             set_safe_button,
+            auto_safe_switch,
+            auto_safe,
             state,
             peak_value,
         }
@@ -196,6 +241,11 @@ impl HeadroomPanel {
 
     pub fn preamp_value(&self) -> f64 {
         self.preamp_spin.value()
+    }
+
+    /// Whether the Auto-Safe continuous preamp clamp is enabled.
+    pub fn auto_safe_enabled(&self) -> bool {
+        self.auto_safe.get()
     }
 
     pub fn set_preamp_value(&self, preamp_db: f64) {
@@ -269,6 +319,21 @@ impl Default for HeadroomPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_auto_safe_preamp_db() {
+        // Curve peaks +6 dB -> preamp -7 dB keeps it at -1 dBFS.
+        assert!((auto_safe_preamp_db(6.0, -1.0) - (-7.0)).abs() < 1e-9);
+        // Curve already low (-3 dB) -> no boost, preamp clamped to 0.
+        assert!((auto_safe_preamp_db(-3.0, -1.0) - 0.0).abs() < 1e-9);
+        // Exactly at target -> 0 preamp would put peak at target already,
+        // so a tiny cut keeps the -1 dBFS margin.
+        assert!((auto_safe_preamp_db(0.0, -1.0) - (-1.0)).abs() < 1e-9);
+        // Huge peak clamps at the preamp floor.
+        assert!((auto_safe_preamp_db(100.0, -1.0) - crate::core::EQ_PREAMP_MIN_DB).abs() < 1e-9);
+        // Non-finite peak -> unity (0 dB) preamp.
+        assert_eq!(auto_safe_preamp_db(f64::NEG_INFINITY, -1.0), 0.0);
+    }
 
     #[test]
     fn test_headroom_meter_norm_endpoints_and_clamp() {
