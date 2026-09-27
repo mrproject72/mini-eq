@@ -712,6 +712,42 @@ pub fn default_bands() -> Vec<EqBand> {
     bands
 }
 
+/// Built-in factory presets that ship with the app and cannot be removed by
+/// the user. They live in code (not the preset dir) so they always exist.
+pub const BUILTIN_PRESET_NAMES: &[&str] = &["Neutral", "Bass Boost", "Treble Boost"];
+
+/// True if `name` is one of the non-removable built-in presets.
+pub fn is_builtin_preset(name: &str) -> bool {
+    BUILTIN_PRESET_NAMES.contains(&name)
+}
+
+/// Bands + preamp for a built-in preset name, or `None` if not a built-in.
+/// Built on top of `default_bands()` (log-spaced active bells) by nudging
+/// the low/high bands.
+pub fn builtin_preset_bands(name: &str) -> Option<(Vec<EqBand>, f64)> {
+    match name {
+        "Neutral" => Some((default_bands(), 0.0)),
+        "Bass Boost" => {
+            let mut bands = default_bands();
+            for band in bands.iter_mut().take(3) {
+                band.gain_db = 5.0;
+            }
+            Some((bands, 0.0))
+        }
+        "Treble Boost" => {
+            let mut bands = default_bands();
+            let n = DEFAULT_ACTIVE_BANDS;
+            if n >= 3 {
+                for band in bands.iter_mut().skip(n - 3).take(3) {
+                    band.gain_db = 4.0;
+                }
+            }
+            Some((bands, 0.0))
+        }
+        _ => None,
+    }
+}
+
 pub fn eq_band_to_dict(band: &EqBand) -> serde_json::Value {
     serde_json::json!({
         "filter_type": band.filter_type as u8,

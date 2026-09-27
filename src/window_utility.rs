@@ -34,6 +34,14 @@ pub struct UtilityPane {
     pub monitor_summary: gtk4::Label,
     /// A/B compare (EQ bypass) switch.
     pub bypass_switch: gtk4::Switch,
+    /// Output device dropdown (moved from the header into Output Controls).
+    pub output_dropdown: gtk4::DropDown,
+    /// Fallback preset action (default preset for unmatched outputs).
+    pub fallback_button: gtk4::Button,
+    pub fallback_label: gtk4::Label,
+    /// Link-to-output action (auto-load current preset for the active output).
+    pub link_button: gtk4::Button,
+    pub link_label: gtk4::Label,
 }
 
 impl UtilityPane {
@@ -68,6 +76,18 @@ impl UtilityPane {
         let bypass_switch = Self::build_compare_row();
         headroom_box.append(&bypass_switch.0);
         headroom_box.append(headroom.borrow().widget());
+
+        // Output Controls: output device + per-device auto-preset actions.
+        let (
+            output_controls,
+            output_dropdown,
+            fallback_button,
+            fallback_label,
+            link_button,
+            link_label,
+        ) = Self::build_output_controls();
+        headroom_box.append(&output_controls);
+
         let headroom_page = Self::scroll_page(&headroom_box);
         let bypass_switch = bypass_switch.1;
 
@@ -91,6 +111,11 @@ impl UtilityPane {
             monitor_loudness_value,
             monitor_summary,
             bypass_switch,
+            output_dropdown,
+            fallback_button,
+            fallback_label,
+            link_button,
+            link_label,
         }
     }
 
@@ -120,6 +145,78 @@ impl UtilityPane {
         bypass_switch.set_tooltip_text(Some("Bypass the EQ to compare with/without"));
         compare_row.append(&bypass_switch);
         (compare_row, bypass_switch)
+    }
+
+    /// "Output Controls" section for the Headroom page: the output-device
+    /// dropdown (moved out of the header) plus the per-output-device
+    /// auto-preset actions (Fallback / Link to Output).
+    fn build_output_controls() -> (
+        gtk4::Box,
+        gtk4::DropDown,
+        gtk4::Button,
+        gtk4::Label,
+        gtk4::Button,
+        gtk4::Label,
+    ) {
+        let section = gtk4::Box::new(gtk4::Orientation::Vertical, 6);
+        section.set_css_classes(&["utility-section"]);
+
+        let header = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+        let title = gtk4::Label::new(Some("Output Controls"));
+        title.set_css_classes(&["heading"]);
+        header.append(&title);
+        section.append(&header);
+
+        // Output device dropdown.
+        let output_list = gtk4::StringList::new(&["System Output", "Virtual Sink"]);
+        let output_dropdown = gtk4::DropDown::new(Some(output_list), None::<gtk4::Expression>);
+        output_dropdown.set_hexpand(true);
+        output_dropdown.set_tooltip_text(Some("EQ output device"));
+        let output_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+        let output_label = gtk4::Label::new(Some("Output"));
+        output_label.set_css_classes(&["metric-title"]);
+        output_row.append(&output_label);
+        output_row.append(&output_dropdown);
+        section.append(&output_row);
+
+        // Fallback: default preset for unmatched output devices.
+        let fallback_button = gtk4::Button::with_label("Set Fallback");
+        fallback_button.set_tooltip_text(Some("Use the current preset for unmatched outputs"));
+        let fallback_label = gtk4::Label::new(Some("None"));
+        fallback_label.set_css_classes(&["dim-label"]);
+        fallback_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+        let fallback_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+        let fallback_title = gtk4::Label::new(Some("Fallback"));
+        fallback_title.set_css_classes(&["metric-title"]);
+        fallback_title.set_hexpand(true);
+        fallback_row.append(&fallback_title);
+        fallback_row.append(&fallback_label);
+        fallback_row.append(&fallback_button);
+        section.append(&fallback_row);
+
+        // Link to Output: auto-load the current preset for the active output.
+        let link_button = gtk4::Button::with_label("Link to Output");
+        link_button.set_tooltip_text(Some("Auto-load the current preset for this output device"));
+        let link_label = gtk4::Label::new(Some("None"));
+        link_label.set_css_classes(&["dim-label"]);
+        link_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+        let link_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+        let link_title = gtk4::Label::new(Some("Link to Output"));
+        link_title.set_css_classes(&["metric-title"]);
+        link_title.set_hexpand(true);
+        link_row.append(&link_title);
+        link_row.append(&link_label);
+        link_row.append(&link_button);
+        section.append(&link_row);
+
+        (
+            section,
+            output_dropdown,
+            fallback_button,
+            fallback_label,
+            link_button,
+            link_label,
+        )
     }
 
     fn build_monitor_panel() -> (gtk4::Box, gtk4::Switch, gtk4::Label, gtk4::Label) {

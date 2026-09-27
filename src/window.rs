@@ -84,16 +84,8 @@ impl MiniEqWindow {
         let window_title = adw::WindowTitle::new("Mini EQ", "");
         header_bar.set_title_widget(Some(&window_title));
 
-        // EQ output dropdown (no "Output" label to save header width; the
-        // tooltip carries the meaning).
-        let output_list = gtk4::StringList::new(&["System Output", "Virtual Sink"]);
-        let output_dropdown = gtk4::DropDown::new(Some(output_list), None::<gtk4::Expression>);
-        // Keep the header narrow so the window can shrink to the 640px
-        // minimum. The dropdown ellipsizes long device names.
-        output_dropdown.set_size_request(120, -1);
-        output_dropdown.set_hexpand(true);
-        output_dropdown.set_tooltip_text(Some("EQ output device"));
-        header_bar.pack_start(&output_dropdown);
+        // The output-device selector now lives in the Headroom panel's
+        // "Output Controls" section (see window_utility.rs), not the header.
 
         // Main menu button
         let menu_button = gtk4::MenuButton::new();
@@ -651,7 +643,44 @@ impl MiniEqWindow {
                 });
         }
 
-        // with 1 dB of margin, mirroring upstream `on_set_safe_preamp_clicked`.
+        // Output Controls (Headroom panel): per-output-device auto-preset.
+        // Fallback = default preset for unmatched outputs; Link to Output =
+        // auto-load the current preset for the active output device. Both
+        // act on the currently-selected preset (from the Preset panel).
+        {
+            let presets = utility.presets.clone();
+            let fallback_label = utility.fallback_label.clone();
+            utility.fallback_button.connect_clicked(move |_| {
+                match presets.borrow().current_preset_name() {
+                    Some(name) => {
+                        if let Err(e) = crate::core::set_output_preset_fallback_name(&name) {
+                            log::warn!("Set fallback preset failed: {e}");
+                        } else {
+                            fallback_label.set_text(&name);
+                            log::info!("Fallback preset set to {name}");
+                        }
+                    }
+                    None => log::info!("No preset selected to set as fallback"),
+                }
+            });
+
+            let presets = utility.presets.clone();
+            let link_label = utility.link_label.clone();
+            utility.link_button.connect_clicked(move |_| {
+                match presets.borrow().current_preset_name() {
+                    Some(name) => {
+                        if let Err(e) = crate::core::set_output_preset_link("default", &name) {
+                            log::warn!("Link preset to output failed: {e}");
+                        } else {
+                            link_label.set_text(&name);
+                            log::info!("Linked preset {name} to output");
+                        }
+                    }
+                    None => log::info!("No preset selected to link to output"),
+                }
+            });
+        }
+
         {
             let headroom = utility.headroom.clone();
             let band_faders = band_faders.clone();
