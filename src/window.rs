@@ -91,7 +91,10 @@ impl MiniEqWindow {
 
         let output_list = gtk4::StringList::new(&["System Output", "Virtual Sink"]);
         let output_dropdown = gtk4::DropDown::new(Some(output_list), None::<gtk4::Expression>);
-        output_dropdown.set_size_request(300, -1);
+        // Keep the header narrow so the window can shrink to the 640px
+        // minimum. The dropdown ellipsizes long device names.
+        output_dropdown.set_size_request(160, -1);
+        output_dropdown.set_hexpand(true);
         header_bar.pack_start(&output_dropdown);
 
         // Main menu button

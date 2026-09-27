@@ -32,7 +32,7 @@ pub struct BandEditorCallbacks {
 
 /// The selected-band editor row.
 pub struct BandEditor {
-    pub container: gtk4::Box,
+    pub container: gtk4::FlowBox,
     title_label: gtk4::Label,
     mute_button: gtk4::ToggleButton,
     solo_button: gtk4::ToggleButton,
@@ -52,10 +52,20 @@ impl BandEditor {
         // Upstream uses `Adw.WrapBox` here, which needs libadwaita 1.7; the
         // project targets 1.4/1.5 (Ubuntu 24.04 ships 1.5), so a plain
         // horizontal box carries the same controls without the newer binding.
-        let container = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+        // FlowBox so the editor WRAPS to multiple rows when the window is
+        // narrow. A single non-wrapping Box forced a ~794px minimum on the
+        // whole window; wrapping makes the minimum just the widest single
+        // field, so the window can shrink freely.
+        let container = gtk4::FlowBox::new();
         container.set_css_classes(&["band-editor"]);
         container.set_hexpand(true);
         container.set_valign(gtk4::Align::Start);
+        container.set_selection_mode(gtk4::SelectionMode::None);
+        container.set_homogeneous(false);
+        container.set_min_children_per_line(1);
+        container.set_max_children_per_line(6);
+        container.set_column_spacing(8);
+        container.set_row_spacing(4);
 
         // ── Band title ───────────────────────────────────────────────────────
         let title_box = gtk4::Box::new(gtk4::Orientation::Vertical, 1);
@@ -68,7 +78,7 @@ impl BandEditor {
         title_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
         title_label.set_max_width_chars(8);
         title_box.append(&title_label);
-        container.append(&title_box);
+        container.insert(&title_box, -1);
 
         // ── Mute / Solo ──────────────────────────────────────────────────────
         let state_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
@@ -84,7 +94,7 @@ impl BandEditor {
         solo_button.set_css_classes(&["band-editor-toggle"]);
         solo_button.set_tooltip_text(Some("Solo Selected Band"));
         state_box.append(&solo_button);
-        container.append(&state_box);
+        container.insert(&state_box, -1);
 
         // ── Filter type ──────────────────────────────────────────────────────
         let type_labels: Vec<&str> = SELECTABLE_FILTER_TYPES
@@ -98,7 +108,7 @@ impl BandEditor {
         type_combo.set_size_request(84, -1);
         type_combo.set_hexpand(true);
         type_combo.set_css_classes(&["band-editor-input"]);
-        container.append(&field("Type", &type_combo));
+        container.insert(&field("Type", &type_combo), -1);
 
         // ── Frequency ────────────────────────────────────────────────────────
         let frequency_spin =
@@ -107,7 +117,7 @@ impl BandEditor {
         frequency_spin.set_size_request(72, -1);
         frequency_spin.set_hexpand(true);
         frequency_spin.set_css_classes(&["band-editor-input"]);
-        container.append(&field("Freq", &frequency_spin));
+        container.insert(&field("Freq", &frequency_spin), -1);
 
         // ── Q ────────────────────────────────────────────────────────────────
         let q_spin = gtk4::SpinButton::with_range(EQ_Q_MIN, EQ_Q_MAX, 0.001);
@@ -115,7 +125,7 @@ impl BandEditor {
         q_spin.set_size_request(56, -1);
         q_spin.set_hexpand(true);
         q_spin.set_css_classes(&["band-editor-input"]);
-        container.append(&field("Q", &q_spin));
+        container.insert(&field("Q", &q_spin), -1);
 
         // ── Gain ─────────────────────────────────────────────────────────────
         let gain_spin = gtk4::SpinButton::with_range(EQ_GAIN_MIN_DB, EQ_GAIN_MAX_DB, 0.1);
@@ -123,7 +133,7 @@ impl BandEditor {
         gain_spin.set_size_request(66, -1);
         gain_spin.set_hexpand(true);
         gain_spin.set_css_classes(&["band-editor-input"]);
-        container.append(&field("Gain", &gain_spin));
+        container.insert(&field("Gain", &gain_spin), -1);
 
         let selected_index = Rc::new(RefCell::new(Option::<usize>::None));
         let updating = Rc::new(RefCell::new(false));
@@ -283,7 +293,7 @@ impl BandEditor {
         self.solo_button.set_sensitive(sensitive);
     }
 
-    pub fn widget(&self) -> &gtk4::Box {
+    pub fn widget(&self) -> &gtk4::FlowBox {
         &self.container
     }
 }
