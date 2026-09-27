@@ -63,7 +63,10 @@ impl MiniEqWindow {
         window.set_default_size(default_width, default_height);
         // Enforce a minimum so components never get cut, while staying small
         // enough not to dominate a low-res screen.
-        window.set_size_request(window_state::MIN_WINDOW_WIDTH, window_state::MIN_WINDOW_HEIGHT);
+        window.set_size_request(
+            window_state::MIN_WINDOW_WIDTH,
+            window_state::MIN_WINDOW_HEIGHT,
+        );
         window.set_title(Some("Mini EQ"));
 
         // Load CSS styling
@@ -588,18 +591,20 @@ impl MiniEqWindow {
                     reset_headroom.borrow().set_preamp_value(0.0);
                     for (i, fader) in reset_band_faders.iter().enumerate() {
                         let mut f = fader.borrow_mut();
-                        let band = default_bands.get(i).cloned().unwrap_or_else(|| {
-                            crate::core::EqBand {
-                                index: i,
-                                frequency: 1000.0,
-                                gain_db: 0.0,
-                                q: 1.0,
-                                filter_type: crate::core::FilterType::Off,
-                                mute: false,
-                                solo: false,
-                                coefficients: crate::core::BiquadCoefficients::identity(),
-                            }
-                        });
+                        let band =
+                            default_bands
+                                .get(i)
+                                .cloned()
+                                .unwrap_or_else(|| crate::core::EqBand {
+                                    index: i,
+                                    frequency: 1000.0,
+                                    gain_db: 0.0,
+                                    q: 1.0,
+                                    filter_type: crate::core::FilterType::Off,
+                                    mute: false,
+                                    solo: false,
+                                    coefficients: crate::core::BiquadCoefficients::identity(),
+                                });
                         let frequency = band.frequency;
                         let q = band.q;
                         let filter_type = band.filter_type;

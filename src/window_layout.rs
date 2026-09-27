@@ -24,13 +24,20 @@ pub fn build_band_faders(
     let scrolled = gtk4::ScrolledWindow::new();
     scrolled.set_hexpand(true);
     scrolled.set_vexpand(true);
-    scrolled.set_policy(gtk4::PolicyType::Automatic, gtk4::PolicyType::Automatic);
+    // Horizontal: NEVER scroll. The fader row is homogeneous + hexpand, so it
+    // is forced to the viewport width and shrinks to fit. This prevents the
+    // row from keeping its natural (72*10=738px) width and overflowing the
+    // window — which was pushing the overlay side panel outside the viewport.
+    scrolled.set_policy(gtk4::PolicyType::Never, gtk4::PolicyType::Automatic);
     scrolled.set_min_content_height(200);
 
     let band_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 2);
     band_box.set_css_classes(&["band-fader-container"]);
     band_box.set_hexpand(true);
     band_box.set_vexpand(true);
+    // Equal-width faders that share the available horizontal space, so the
+    // row shrinks to fit a narrow window instead of overflowing it.
+    band_box.set_homogeneous(true);
 
     let mut faders = Vec::new();
     let count = visible_bands.clamp(1, MAX_BANDS);

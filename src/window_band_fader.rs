@@ -45,7 +45,7 @@ impl WindowBandFader {
 
         let container = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
         container.set_css_classes(&["band-fader-row"]);
-        container.set_hexpand(false);
+        container.set_hexpand(true);
         container.set_vexpand(true);
         container.append(&fader.borrow().container);
 

@@ -60,7 +60,8 @@ impl BandEditor {
         // ── Band title ───────────────────────────────────────────────────────
         let title_box = gtk4::Box::new(gtk4::Orientation::Vertical, 1);
         title_box.set_css_classes(&["band-editor-selected"]);
-        title_box.set_size_request(88, -1);
+        title_box.set_size_request(64, -1);
+        title_box.set_hexpand(true);
         let title_label = gtk4::Label::new(Some("No Band"));
         title_label.set_css_classes(&["band-editor-title"]);
         title_label.set_xalign(0.0);
@@ -94,7 +95,8 @@ impl BandEditor {
             Some(gtk4::StringList::new(&type_labels)),
             None::<gtk4::Expression>,
         );
-        type_combo.set_size_request(118, -1);
+        type_combo.set_size_request(84, -1);
+        type_combo.set_hexpand(true);
         type_combo.set_css_classes(&["band-editor-input"]);
         container.append(&field("Type", &type_combo));
 
@@ -102,21 +104,24 @@ impl BandEditor {
         let frequency_spin =
             gtk4::SpinButton::with_range(EQ_FREQUENCY_MIN_HZ, EQ_FREQUENCY_MAX_HZ, 0.1);
         frequency_spin.set_digits(1);
-        frequency_spin.set_size_request(110, -1);
+        frequency_spin.set_size_request(72, -1);
+        frequency_spin.set_hexpand(true);
         frequency_spin.set_css_classes(&["band-editor-input"]);
-        container.append(&field("Frequency", &frequency_spin));
+        container.append(&field("Freq", &frequency_spin));
 
         // ── Q ────────────────────────────────────────────────────────────────
         let q_spin = gtk4::SpinButton::with_range(EQ_Q_MIN, EQ_Q_MAX, 0.001);
         q_spin.set_digits(3);
-        q_spin.set_size_request(82, -1);
+        q_spin.set_size_request(56, -1);
+        q_spin.set_hexpand(true);
         q_spin.set_css_classes(&["band-editor-input"]);
         container.append(&field("Q", &q_spin));
 
         // ── Gain ─────────────────────────────────────────────────────────────
         let gain_spin = gtk4::SpinButton::with_range(EQ_GAIN_MIN_DB, EQ_GAIN_MAX_DB, 0.1);
         gain_spin.set_digits(1);
-        gain_spin.set_size_request(96, -1);
+        gain_spin.set_size_request(66, -1);
+        gain_spin.set_hexpand(true);
         gain_spin.set_css_classes(&["band-editor-input"]);
         container.append(&field("Gain", &gain_spin));
 
@@ -288,6 +293,7 @@ fn field(label: &str, control: &impl IsA<gtk4::Widget>) -> gtk4::Box {
     let shell = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
     shell.set_css_classes(&["band-editor-field"]);
     shell.set_valign(gtk4::Align::Center);
+    shell.set_hexpand(true);
 
     let label = gtk4::Label::new(Some(label));
     label.set_css_classes(&["metric-title"]);

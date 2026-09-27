@@ -10,8 +10,12 @@ use gtk4::prelude::*;
 
 use crate::core::{EQ_GAIN_MAX_DB, EQ_GAIN_MIN_DB, FilterType};
 
-const CONTENT_W: i32 = 72;
 const CONTENT_H: i32 = 182;
+/// Minimum fader width. The fader is horizontally responsive: it grows to
+/// fill the available width (via hexpand + a homogeneous row) and can shrink
+/// down to this, so the window doesn't need to be as wide as the full
+/// fixed-width row to avoid horizontal cutting.
+const FADER_MIN_W: i32 = 44;
 const GAIN_STEP_DB: f64 = 0.5;
 const GAIN_FINE_STEP_DB: f64 = 0.1;
 const GAIN_COARSE_STEP_DB: f64 = 3.0;
@@ -96,13 +100,18 @@ impl EqBandFader {
         {
             let f = fader.borrow();
             f.container.set_css_classes(&["eq-band-box"]);
-            f.container.set_size_request(CONTENT_W, CONTENT_H);
-            f.container.set_hexpand(false);
+            // Responsive width: min FADER_MIN_W, expands to fill (set in the
+            // homogeneous band row). Height stays fixed-ish via CONTENT_H.
+            f.container.set_size_request(FADER_MIN_W, CONTENT_H);
+            f.container.set_hexpand(true);
 
             let drawing_area = &f.drawing_area;
-            drawing_area.set_content_width(CONTENT_W);
+            // content_width is the drawing area's MINIMUM width request; keep it
+            // at FADER_MIN_W so the fader can actually shrink to fit a narrow
+            // window. The draw func uses the real allocated width, so it scales.
+            drawing_area.set_content_width(FADER_MIN_W);
             drawing_area.set_content_height(CONTENT_H);
-            drawing_area.set_hexpand(false);
+            drawing_area.set_hexpand(true);
             drawing_area.set_vexpand(true);
             drawing_area.set_focusable(true);
             drawing_area.set_tooltip_text(Some("Band Gain"));
@@ -358,7 +367,11 @@ impl EqBandFader {
     }
 
     pub fn set_height(&self, height: i32) {
-        self.container.set_size_request(CONTENT_W, height);
+        // Only change the HEIGHT here. Keep the width at the responsive
+        // FADER_MIN_W so the compact breakpoint (fired when the window is
+        // narrowed) doesn't reset the fader to the fixed CONTENT_W=72 and
+        // force the row wider than the window.
+        self.container.set_size_request(FADER_MIN_W, height);
         self.drawing_area.set_content_height(height);
         self.drawing_area.queue_draw();
     }
