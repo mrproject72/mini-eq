@@ -131,9 +131,24 @@ const STYLE_CSS: &str = r#"
     min-height: 32px;
 }
 
+/* Compact the +/- buttons inside the editor SpinButtons. Their default
+   min-width (~28px each) is what makes each spin ~113-127px wide and
+   forces the editor row to ~800px. Shrinking them lets the editor stay
+   on a single line at the 640px minimum window width. */
+.band-editor-input button {
+    min-width: 0;
+    min-height: 0;
+    padding: 0 2px;
+    margin: 0;
+}
+
+.band-editor-input entry {
+    min-width: 0;
+}
+
 .band-editor-toggle {
-    min-width: 34px;
-    min-height: 34px;
+    min-width: 24px;
+    min-height: 30px;
     padding: 0;
     border-radius: 9px;
     font-weight: 800;

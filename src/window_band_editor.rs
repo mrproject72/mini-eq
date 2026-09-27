@@ -62,15 +62,15 @@ impl BandEditor {
         container.set_valign(gtk4::Align::Start);
         container.set_selection_mode(gtk4::SelectionMode::None);
         container.set_homogeneous(false);
-        container.set_min_children_per_line(1);
+        container.set_min_children_per_line(6);
         container.set_max_children_per_line(6);
-        container.set_column_spacing(8);
+        container.set_column_spacing(4);
         container.set_row_spacing(4);
 
         // ── Band title ───────────────────────────────────────────────────────
         let title_box = gtk4::Box::new(gtk4::Orientation::Vertical, 1);
         title_box.set_css_classes(&["band-editor-selected"]);
-        title_box.set_size_request(64, -1);
+        title_box.set_size_request(36, -1);
         title_box.set_hexpand(true);
         let title_label = gtk4::Label::new(Some("No Band"));
         title_label.set_css_classes(&["band-editor-title"]);
@@ -105,35 +105,35 @@ impl BandEditor {
             Some(gtk4::StringList::new(&type_labels)),
             None::<gtk4::Expression>,
         );
-        type_combo.set_size_request(84, -1);
+        type_combo.set_size_request(60, -1);
         type_combo.set_hexpand(true);
         type_combo.set_css_classes(&["band-editor-input"]);
-        container.insert(&field("Type", &type_combo), -1);
+        container.insert(&field("T", "Type", &type_combo), -1);
 
         // ── Frequency ────────────────────────────────────────────────────────
         let frequency_spin =
             gtk4::SpinButton::with_range(EQ_FREQUENCY_MIN_HZ, EQ_FREQUENCY_MAX_HZ, 0.1);
         frequency_spin.set_digits(1);
-        frequency_spin.set_size_request(72, -1);
+        frequency_spin.set_size_request(56, -1);
         frequency_spin.set_hexpand(true);
         frequency_spin.set_css_classes(&["band-editor-input"]);
-        container.insert(&field("Freq", &frequency_spin), -1);
+        container.insert(&field("F", "Frequency", &frequency_spin), -1);
 
         // ── Q ────────────────────────────────────────────────────────────────
         let q_spin = gtk4::SpinButton::with_range(EQ_Q_MIN, EQ_Q_MAX, 0.001);
         q_spin.set_digits(3);
-        q_spin.set_size_request(56, -1);
+        q_spin.set_size_request(44, -1);
         q_spin.set_hexpand(true);
         q_spin.set_css_classes(&["band-editor-input"]);
-        container.insert(&field("Q", &q_spin), -1);
+        container.insert(&field("Q", "Q factor", &q_spin), -1);
 
         // ── Gain ─────────────────────────────────────────────────────────────
         let gain_spin = gtk4::SpinButton::with_range(EQ_GAIN_MIN_DB, EQ_GAIN_MAX_DB, 0.1);
         gain_spin.set_digits(1);
-        gain_spin.set_size_request(66, -1);
+        gain_spin.set_size_request(52, -1);
         gain_spin.set_hexpand(true);
         gain_spin.set_css_classes(&["band-editor-input"]);
-        container.insert(&field("Gain", &gain_spin), -1);
+        container.insert(&field("G", "Gain", &gain_spin), -1);
 
         let selected_index = Rc::new(RefCell::new(Option::<usize>::None));
         let updating = Rc::new(RefCell::new(false));
@@ -246,6 +246,10 @@ impl BandEditor {
         *self.updating.borrow_mut() = true;
         *self.selected_index.borrow_mut() = fader.map(|f| f.index);
 
+        // Only show the editor when a band is selected. With nothing selected
+        // the controls would be inert and confusing, so hide the whole row.
+        self.container.set_visible(fader.is_some());
+
         match fader {
             None => {
                 self.title_label.set_text("No Band");
@@ -299,15 +303,19 @@ impl BandEditor {
 }
 
 /// Wrap a labelled control in the upstream `band-editor-field` shell.
-fn field(label: &str, control: &impl IsA<gtk4::Widget>) -> gtk4::Box {
-    let shell = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+/// `short` is the visible one-letter label; `full` is shown as a hover
+/// tooltip. Keeping the label to one letter saves ~70px across the row so
+/// the editor fits on a single line at the 640px minimum window width.
+fn field(short: &str, full: &str, control: &impl IsA<gtk4::Widget>) -> gtk4::Box {
+    let shell = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
     shell.set_css_classes(&["band-editor-field"]);
     shell.set_valign(gtk4::Align::Center);
     shell.set_hexpand(true);
 
-    let label = gtk4::Label::new(Some(label));
+    let label = gtk4::Label::new(Some(short));
     label.set_css_classes(&["metric-title"]);
     label.set_xalign(0.0);
+    label.set_tooltip_text(Some(full));
     label.set_mnemonic_widget(Some(control));
     shell.append(&label);
     shell.append(control);
