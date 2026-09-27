@@ -246,9 +246,14 @@ impl BandEditor {
         *self.updating.borrow_mut() = true;
         *self.selected_index.borrow_mut() = fader.map(|f| f.index);
 
-        // Only show the editor when a band is selected. With nothing selected
-        // the controls would be inert and confusing, so hide the whole row.
-        self.container.set_visible(fader.is_some());
+        // Reserve the editor's space at the bottom even when nothing is
+        // selected, so showing/hiding it never changes the fader area's
+        // height (which would make a fader visually "slide" on first click).
+        // Fade the row in/out with opacity + sensitivity instead of removing
+        // it from the layout.
+        self.container
+            .set_opacity(if fader.is_some() { 1.0 } else { 0.0 });
+        self.container.set_can_target(fader.is_some());
 
         match fader {
             None => {
