@@ -438,6 +438,9 @@ impl MiniEqWindow {
         window.add_controller(key_controller);
 
         // Start real-time update loop for graph + headroom + backend push
+        // Shared flag: true when the EQ curve peak exceeds the -1 dBFS
+        // target. Drives the blinking Headroom header-icon warning.
+        let headroom_warning = Rc::new(std::cell::Cell::new(false));
         {
             let graph = utility.graph.clone();
             let headroom = utility.headroom.clone();
@@ -446,6 +449,7 @@ impl MiniEqWindow {
             let engine_sink = engine_sink.clone();
             let monitor_loudness_value = utility.monitor_loudness_value.clone();
             let monitor_summary = utility.monitor_summary.clone();
+            let headroom_warning = headroom_warning.clone();
             // Debounce state: only reload the filter-chain when the effective
             // state actually changed and at most every 400 ms, so fader drags
             // do not thrash the module.
@@ -533,6 +537,24 @@ impl MiniEqWindow {
                 }
                 headroom.borrow_mut().update_curve_peak(&bands, preamp_db);
 
+                // Warn (blink the Headroom icon) when the output rides over
+                // the -1 dBFS target. Prefer the LIVE monitor peak (actual
+                // output level). When the monitor is off, fall back to the
+                // estimated curve peak but only warn on an actual boost
+                // (peak > 0 dB), so a flat/neutral EQ never false-triggers.
+                let live_peak = backend
+                    .borrow()
+                    .as_ref()
+                    .and_then(|be| be.monitor_peak_dbfs());
+                let warn = match live_peak {
+                    Some(db) => db > crate::window_headroom::AUTO_SAFE_TARGET_DBFS,
+                    None => {
+                        let est = *headroom.borrow().peak_value.borrow();
+                        est > 0.0
+                    }
+                };
+                headroom_warning.set(warn);
+
                 // Push UI state to the PipeWire engine (debounced).
                 let sig = crate::core::preset_payload_state_signature(
                     &crate::core::preset_payload(&bands, preamp_db),
@@ -561,7 +583,29 @@ impl MiniEqWindow {
             });
         }
 
-        // Pump the PipeWire main loop from the GTK main loop so registry
+        // Blink the Headroom header icon while the EQ curve peak is over the
+        // -1 dBFS target. GTK4 CSS has no @keyframes, so we toggle a class
+        // on a 500 ms timer; a CSS color transition smooths it into a pulse.
+        {
+            let headroom_btn = headroom_btn.clone();
+            let headroom_warning = headroom_warning.clone();
+            let blink_on = Rc::new(std::cell::Cell::new(false));
+            glib::timeout_add_local(std::time::Duration::from_millis(500), move || {
+                if headroom_warning.get() {
+                    blink_on.set(!blink_on.get());
+                    if blink_on.get() {
+                        headroom_btn.add_css_class("headroom-warning");
+                    } else {
+                        headroom_btn.remove_css_class("headroom-warning");
+                    }
+                } else if blink_on.get() || headroom_btn.has_css_class("headroom-warning") {
+                    blink_on.set(false);
+                    headroom_btn.remove_css_class("headroom-warning");
+                }
+                ControlFlow::Continue
+            });
+        }
+
         // events, sync roundtrips and module callbacks are dispatched without
         // running a second OS thread.
         {
@@ -609,6 +653,8 @@ impl MiniEqWindow {
             let monitor_target = engine_sink.clone();
             let summary = utility.monitor_summary.clone();
             utility
+                .graph
+                .borrow()
                 .monitor_switch
                 .connect_state_set(move |_switch, on| {
                     if let Some(be) = backend_for_monitor.borrow_mut().as_mut() {

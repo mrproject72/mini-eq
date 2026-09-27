@@ -33,6 +33,11 @@ pub struct MonitorShared {
     pub frames_captured: Mutex<u64>,
     pub peak_sample: Mutex<f32>,
     pub mean_sample: Mutex<f32>,
+    /// Accumulates the peak absolute sample since the last `take_window_peak`
+    /// call (reset each read), giving a windowed current peak for the
+    /// clipping warning. Separate from `peak_sample` (the all-time max used
+    /// by diagnostics).
+    pub window_peak: Mutex<f32>,
 }
 
 /// DSP state owned by the capture callbacks (loop thread only, via Mutex).
@@ -458,6 +463,17 @@ impl OutputSpectrumAnalyzer {
         (frames, active, peak, mean)
     }
 
+    /// Read the windowed peak absolute sample (linear amplitude) accumulated
+    /// since the last call, then reset it. Returns 0.0 when no audio has been
+    /// captured in the window (e.g. monitor off). Convert to dBFS with
+    /// `20*log10(peak)`.
+    pub fn take_window_peak(&self) -> f32 {
+        let mut guard = self.shared.window_peak.lock().unwrap();
+        let p = *guard;
+        *guard = 0.0;
+        p
+    }
+
     pub fn analyze(&mut self, samples: &[f32]) {
         if samples.is_empty() {
             return;
@@ -542,6 +558,12 @@ fn process_capture_buffers(
                 let peak = floats.iter().fold(0.0f32, |m, v| m.max(v.abs()));
                 {
                     let mut guard = shared.peak_sample.lock().unwrap();
+                    if peak > *guard {
+                        *guard = peak;
+                    }
+                }
+                {
+                    let mut guard = shared.window_peak.lock().unwrap();
                     if peak > *guard {
                         *guard = peak;
                     }

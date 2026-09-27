@@ -26,8 +26,6 @@ pub struct UtilityPane {
     pub headroom: Rc<RefCell<window_headroom::HeadroomPanel>>,
     pub graph: Rc<RefCell<window_graph::EqGraph>>,
     pub presets: Rc<RefCell<window_presets::PresetPanel>>,
-    /// The Monitor on/off switch (wired to backend start/stop_monitor).
-    pub monitor_switch: gtk4::Switch,
     /// Loudness readout label in the monitor strip (updated from the meter).
     pub monitor_loudness_value: gtk4::Label,
     /// "On · -23 LUFS" summary label in the monitor strip.
@@ -56,8 +54,7 @@ impl UtilityPane {
         let preset_page = Self::scroll_page(presets.borrow().widget());
 
         // --- Signal Analyzer page: spectrum + monitor strip.
-        let (monitor_panel, monitor_switch, monitor_loudness_value, monitor_summary) =
-            Self::build_monitor_panel();
+        let (monitor_panel, monitor_loudness_value, monitor_summary) = Self::build_monitor_panel();
         let analyzer_box = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
         analyzer_box.set_margin_top(8);
         analyzer_box.set_margin_bottom(8);
@@ -107,7 +104,6 @@ impl UtilityPane {
             headroom,
             graph,
             presets,
-            monitor_switch,
             monitor_loudness_value,
             monitor_summary,
             bypass_switch,
@@ -219,7 +215,7 @@ impl UtilityPane {
         )
     }
 
-    fn build_monitor_panel() -> (gtk4::Box, gtk4::Switch, gtk4::Label, gtk4::Label) {
+    fn build_monitor_panel() -> (gtk4::Box, gtk4::Label, gtk4::Label) {
         let panel = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
         panel.set_css_classes(&["monitor-strip"]);
 
@@ -277,9 +273,9 @@ impl UtilityPane {
         settings_button.set_popover(Some(&settings_popover));
         header.append(&settings_button);
 
-        let monitor_switch = gtk4::Switch::new();
-        monitor_switch.set_valign(gtk4::Align::Center);
-        header.append(&monitor_switch);
+        // NOTE: the monitor on/off switch now lives in the graph header
+        // (window_graph.rs), directly above the spectrum. The panel keeps
+        // the settings, loudness meter and summary.
         panel.append(&header);
 
         let detail_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
@@ -302,7 +298,7 @@ impl UtilityPane {
         summary_label.set_halign(gtk4::Align::Start);
         panel.append(&summary_label);
 
-        (panel, monitor_switch, loudness_value, summary_label)
+        (panel, loudness_value, summary_label)
     }
 
     /// Show a specific panel by page name (called by the header buttons).

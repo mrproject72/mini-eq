@@ -75,6 +75,9 @@ pub struct EqGraph {
     pub background_area: gtk4::DrawingArea,
     pub analyzer_area: gtk4::DrawingArea,
     pub response_area: gtk4::DrawingArea,
+    /// Output-monitor on/off switch, placed in the graph header (right of the
+    /// "Frequency Response" title) so it sits directly above the spectrum.
+    pub monitor_switch: gtk4::Switch,
     pub state: std::rc::Rc<std::cell::RefCell<EqGraphState>>,
 }
 
@@ -120,6 +123,18 @@ impl EqGraph {
         let title = gtk4::Label::new(Some("Frequency Response"));
         title.set_css_classes(&["heading"]);
         header.append(&title);
+
+        // Push the monitor switch to the right edge of the title row, right
+        // above the spectrum box.
+        let header_spacer = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+        header_spacer.set_hexpand(true);
+        header.append(&header_spacer);
+
+        let monitor_switch = gtk4::Switch::new();
+        monitor_switch.set_valign(gtk4::Align::Center);
+        monitor_switch.set_tooltip_text(Some("Output monitor (live spectrum)"));
+        header.append(&monitor_switch);
+
         header.set_hexpand(true);
         container.append(&header);
         container.append(&overlay);
@@ -130,6 +145,7 @@ impl EqGraph {
             background_area,
             analyzer_area,
             response_area,
+            monitor_switch,
             state,
         }
     }

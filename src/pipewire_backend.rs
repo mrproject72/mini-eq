@@ -257,6 +257,20 @@ impl PipeWireBackend {
         self.analyzer.display_levels()
     }
 
+    /// Windowed output peak in dBFS (from the live monitor). Returns None
+    /// when the monitor is off or no audio was captured in the window.
+    pub fn monitor_peak_dbfs(&self) -> Option<f64> {
+        if !self.analyzer.is_enabled() {
+            return None;
+        }
+        let lin = self.analyzer.take_window_peak();
+        if lin > 0.0 {
+            Some(20.0 * (lin as f64).log10())
+        } else {
+            Some(f64::NEG_INFINITY)
+        }
+    }
+
     /// Latest loudness snapshot from live captured audio, if any.
     pub fn monitor_loudness(&self) -> Option<crate::analyzer::AnalyzerLoudnessSnapshot> {
         self.analyzer.display_loudness()

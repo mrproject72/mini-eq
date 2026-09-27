@@ -202,6 +202,20 @@ const STYLE_CSS: &str = r#"
     color: var(--text-muted);
 }
 
+/* Blinking warning on the Headroom header icon when the EQ curve peak
+   exceeds the -1 dBFS target. Toggled by a 500 ms timer (GTK4 CSS has no
+   @keyframes); the color transition smooths each toggle into a pulse. */
+button.headroom-warning,
+button.headroom-warning image {
+    color: var(--danger-color);
+}
+
+button.headroom-warning {
+    transition: color 250ms ease-in-out, background-color 250ms ease-in-out;
+    background-color: color-mix(in srgb, var(--danger-color) 22%, transparent);
+    border-color: var(--danger-color);
+}
+
 .system-state-chip {
     border-radius: 10px;
     padding: 2px 8px;
