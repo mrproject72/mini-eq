@@ -159,6 +159,11 @@ impl EqGraph {
         s.filter_type = filter_type;
         s.bands = bands.to_vec();
         s.analyzer_levels = analyzer_levels.to_vec();
+        // Queue the specific drawing areas directly. `overlay.queue_draw()`
+        // does not reliably re-invoke the child `DrawingArea` draw funcs in
+        // GTK4, which left the response curve frozen after the first paint.
+        self.response_area.queue_draw();
+        self.analyzer_area.queue_draw();
         self.overlay.queue_draw();
     }
 

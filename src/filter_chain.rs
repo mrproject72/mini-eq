@@ -140,22 +140,37 @@ pub fn native_biquad_band_control_values(
     controls
 }
 
-/// Control values for the preamp node.
-pub fn native_biquad_preamp_control_values(preamp_db: f64, eq_enabled: bool) -> Vec<(String, f64)> {
-    let gain = if eq_enabled {
-        db_to_linear(preamp_db.clamp(EQ_PREAMP_MIN_DB, EQ_PREAMP_MAX_DB))
-    } else {
-        1.0
-    };
+/// Map a biquad's raw coefficients to the `bq_raw` node's control names
+/// (`<node>:b0` … `<node>:a2`). Mirrors upstream
+/// `biquad_coefficients_to_controls`. The preamp node is a `bq_raw` node,
+/// so its live control is the coefficient set — NOT mixer `Gain 1/2`.
+fn biquad_coefficients_to_controls(
+    node_name: &str,
+    coefficients: &crate::core::BiquadCoefficients,
+) -> Vec<(String, f64)> {
+    let (b0, b1, b2, a0, a1, a2) = coefficients.as_tuple();
+    vec![
+        (format!("{node_name}:b0"), b0),
+        (format!("{node_name}:b1"), b1),
+        (format!("{node_name}:b2"), b2),
+        (format!("{node_name}:a0"), a0),
+        (format!("{node_name}:a1"), a1),
+        (format!("{node_name}:a2"), a2),
+    ]
+}
 
+/// Control values for the preamp node. The preamp is a `bq_raw` node whose
+/// gain is carried in the biquad coefficients, so the live control pushes
+/// the raw `b0..a2` set (scaled for the control range), matching upstream
+/// `builtin_biquad_preamp_control_values`.
+pub fn native_biquad_preamp_control_values(preamp_db: f64, eq_enabled: bool) -> Vec<(String, f64)> {
+    let coefficients = preamp_biquad_coefficients(preamp_db, eq_enabled);
     let mut controls = Vec::new();
     for side in ["l", "r"] {
-        let name = preamp_node_name(side);
-        controls.push((format!("{}_filter:Freq", name), 0.0));
-        controls.push((format!("{}_filter:Q", name), 1.0));
-        controls.push((format!("{}_filter:Gain", name), 0.0));
-        controls.push((format!("{}:Gain 1", name), gain));
-        controls.push((format!("{}:Gain 2", name), 0.0));
+        controls.extend(biquad_coefficients_to_controls(
+            &preamp_node_name(side),
+            &coefficients,
+        ));
     }
     controls
 }
@@ -576,23 +591,25 @@ mod tests {
 
     #[test]
     fn test_preamp_control_gain() {
-        // +6 dB preamp -> linear gain ~1.9953.
+        // The preamp is a `bq_raw` node: its gain is carried in the raw
+        // biquad coefficients (`preamp_l:b0`), not a mixer `Gain 1`.
+        // +6 dB preamp -> linear gain ~1.9953 in b0.
         let controls = native_biquad_preamp_control_values(6.0, true);
-        let gain = controls
-            .iter()
-            .find(|(k, _)| k == "preamp_l:Gain 1")
-            .unwrap()
-            .1;
-        assert!((gain - 1.995_262_3).abs() < 1e-5, "gain was {}", gain);
+        let b0 = controls.iter().find(|(k, _)| k == "preamp_l:b0").unwrap().1;
+        assert!((b0 - 1.995_262_3).abs() < 1e-5, "b0 was {}", b0);
+        // a0 stays 1 (pure gain, no scaling needed under the +/-10 limit).
+        let a0 = controls.iter().find(|(k, _)| k == "preamp_l:a0").unwrap().1;
+        assert!((a0 - 1.0).abs() < 1e-9, "a0 was {}", a0);
+        // The old mixer control must NOT be present.
+        assert!(
+            !controls.iter().any(|(k, _)| k == "preamp_l:Gain 1"),
+            "stale mixer control present"
+        );
 
-        // Bypassed EQ -> unity.
+        // Bypassed EQ -> unity (b0 == 1).
         let bypassed = native_biquad_preamp_control_values(6.0, false);
         assert_eq!(
-            bypassed
-                .iter()
-                .find(|(k, _)| k == "preamp_l:Gain 1")
-                .unwrap()
-                .1,
+            bypassed.iter().find(|(k, _)| k == "preamp_l:b0").unwrap().1,
             1.0
         );
     }
