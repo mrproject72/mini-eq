@@ -155,15 +155,33 @@ impl MiniEqWindow {
             let graph = utility.graph.clone();
             let refresh = refresh_editor.clone();
             Rc::new(move |index: usize| {
-                for fader in registry.borrow().iter() {
-                    let mut f = fader.borrow_mut();
-                    let should_select = f.index == index;
-                    if f.selected != should_select {
-                        f.selected = should_select;
-                        f.drawing_area.queue_draw();
+                // Toggle: clicking the already-selected fader deselects it so
+                // the editor disappears again. Clicking any other fader moves
+                // the selection to it.
+                let already_selected = registry
+                    .borrow()
+                    .iter()
+                    .any(|f| f.borrow().index == index && f.borrow().selected);
+                if already_selected {
+                    for fader in registry.borrow().iter() {
+                        let mut f = fader.borrow_mut();
+                        if f.selected {
+                            f.selected = false;
+                            f.drawing_area.queue_draw();
+                        }
                     }
+                    graph.borrow_mut().set_selected_band(None);
+                } else {
+                    for fader in registry.borrow().iter() {
+                        let mut f = fader.borrow_mut();
+                        let should_select = f.index == index;
+                        if f.selected != should_select {
+                            f.selected = should_select;
+                            f.drawing_area.queue_draw();
+                        }
+                    }
+                    graph.borrow_mut().set_selected_band(Some(index));
                 }
-                graph.borrow_mut().set_selected_band(Some(index));
                 refresh();
             }) as Rc<dyn Fn(usize)>
         };
