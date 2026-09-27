@@ -84,17 +84,15 @@ impl MiniEqWindow {
         let window_title = adw::WindowTitle::new("Mini EQ", "");
         header_bar.set_title_widget(Some(&window_title));
 
-        // EQ output dropdown
-        let output_label = gtk4::Label::new(Some("Output"));
-        output_label.set_css_classes(&["heading"]);
-        header_bar.pack_start(&output_label);
-
+        // EQ output dropdown (no "Output" label to save header width; the
+        // tooltip carries the meaning).
         let output_list = gtk4::StringList::new(&["System Output", "Virtual Sink"]);
         let output_dropdown = gtk4::DropDown::new(Some(output_list), None::<gtk4::Expression>);
         // Keep the header narrow so the window can shrink to the 640px
         // minimum. The dropdown ellipsizes long device names.
-        output_dropdown.set_size_request(160, -1);
+        output_dropdown.set_size_request(120, -1);
         output_dropdown.set_hexpand(true);
+        output_dropdown.set_tooltip_text(Some("EQ output device"));
         header_bar.pack_start(&output_dropdown);
 
         // Main menu button
@@ -104,22 +102,31 @@ impl MiniEqWindow {
         menu_button.set_menu_model(Some(&menu_model));
         header_bar.pack_end(&menu_button);
 
-        // System-wide EQ toggle
+        // System-wide EQ toggle (no "System EQ" label to save header width).
         let route_switch = gtk4::Switch::new();
         route_switch.set_tooltip_text(Some("System-wide EQ"));
         header_bar.pack_end(&route_switch);
 
-        let route_label = gtk4::Label::new(Some("System EQ"));
-        header_bar.pack_end(&route_label);
-
-        // Inspector pane toggle
-        let inspector_button = gtk4::ToggleButton::new();
-        inspector_button.set_icon_name("sidebar-show-symbolic");
-        inspector_button.set_tooltip_text(Some("Toggle side panel (F9)"));
-        // Panel is collapsed (hidden) by default; the toggle reveals it as an
-        // overlay over the full-width main content.
-        inspector_button.set_active(false);
-        header_bar.pack_end(&inspector_button);
+        // Panel switch buttons: each swaps the sidebar to a different panel
+        // (Preset / Signal Analyzer / Headroom) and opens it. Mutually
+        // exclusive; clicking the active one closes the sidebar. Replaces the
+        // old single inspector toggle. Wired to the stack after the layout is
+        // built (they need the split_view + utility pane handles).
+        let panel_switch_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+        panel_switch_box.set_css_classes(&["linked", "panel-switch-group"]);
+        let preset_btn = gtk4::ToggleButton::new();
+        preset_btn.set_icon_name("view-list-symbolic");
+        preset_btn.set_tooltip_text(Some("Presets (F9)"));
+        let analyzer_btn = gtk4::ToggleButton::new();
+        analyzer_btn.set_icon_name("audio-x-generic-symbolic");
+        analyzer_btn.set_tooltip_text(Some("Signal Analyzer"));
+        let headroom_btn = gtk4::ToggleButton::new();
+        headroom_btn.set_icon_name("audio-volume-high-symbolic");
+        headroom_btn.set_tooltip_text(Some("Headroom / Levels"));
+        panel_switch_box.append(&preset_btn);
+        panel_switch_box.append(&analyzer_btn);
+        panel_switch_box.append(&headroom_btn);
+        header_bar.pack_start(&panel_switch_box);
 
         // Build main layout with utility pane.
         //
@@ -293,17 +300,53 @@ impl MiniEqWindow {
 
         window.set_content(Some(&toolbar_view));
 
-        // Inspector pane toggle mirrors the F9 binding. The split view is kept
-        // in overlay mode (collapsed=TRUE) so the main content is ALWAYS full
-        // width; the toggle drives `show-sidebar`, which slides the panel
-        // OVER the content instead of resizing it.
+        // Panel switch buttons: mutually exclusive. Each shows its sidebar
+        // page and opens the sidebar (as an OVERLAY over the full-width main
+        // content, since the split view is collapsed=TRUE). Clicking the
+        // already-active button closes the sidebar. The stack handle is cloned
+        // because `utility` is moved into Self at the end.
         {
-            let split_view_for_toggle = split_view.clone();
-            inspector_button.connect_toggled(move |button| {
-                split_view_for_toggle
-                    .borrow_mut()
-                    .set_show_sidebar(button.is_active());
-            });
+            let stack = utility.container.clone();
+            let split_view_for_panel = split_view.clone();
+            let guard = Rc::new(std::cell::Cell::new(false));
+            let all_buttons: Vec<gtk4::ToggleButton> = vec![
+                preset_btn.clone(),
+                analyzer_btn.clone(),
+                headroom_btn.clone(),
+            ];
+            let pages = [
+                crate::window_utility::PAGE_PRESET,
+                crate::window_utility::PAGE_ANALYZER,
+                crate::window_utility::PAGE_HEADROOM,
+            ];
+            for (btn, page) in all_buttons.iter().zip(pages.iter()) {
+                let stack = stack.clone();
+                let split_view_for_panel = split_view_for_panel.clone();
+                let guard = guard.clone();
+                let all_buttons = all_buttons.clone();
+                let page = *page;
+                btn.connect_toggled(move |b| {
+                    if guard.get() {
+                        return;
+                    }
+                    guard.set(true);
+                    if b.is_active() {
+                        for other in all_buttons.iter() {
+                            if other != b {
+                                other.set_active(false);
+                            }
+                        }
+                        stack.set_visible_child_name(page);
+                        split_view_for_panel.borrow_mut().set_show_sidebar(true);
+                    } else {
+                        // The active button was toggled off -> close the sidebar.
+                        split_view_for_panel.borrow_mut().set_show_sidebar(false);
+                    }
+                    guard.set(false);
+                });
+            }
+            // Preset is the default active panel.
+            preset_btn.set_active(true);
         }
 
         // Breakpoints: 1320sp collapses sidebar/pins END, 1080sp compacts toolbar/faders
@@ -372,13 +415,30 @@ impl MiniEqWindow {
         // Center window
         window_utils::center_window();
 
-        // F9 binding to toggle the side panel. Drives the inspector button's
-        // active state, which in turn sets `show-sidebar` (overlay reveal).
-        let inspector_for_f9 = inspector_button.clone();
+        // F9 toggles the side panel. When opening, ensure a panel button is
+        // active (Preset if none); when closing, deactivate all. The button
+        // handlers also drive `show-sidebar`, so we set it directly here too
+        // to keep the two paths consistent.
+        let split_for_f9 = split_view.clone();
+        let f9_buttons = [
+            preset_btn.clone(),
+            analyzer_btn.clone(),
+            headroom_btn.clone(),
+        ];
         let key_controller = gtk4::EventControllerKey::new();
         key_controller.connect_key_pressed(move |_, key, _, _| {
             if key == gtk4::gdk::Key::F9 {
-                inspector_for_f9.set_active(!inspector_for_f9.is_active());
+                let open = !split_for_f9.borrow().shows_sidebar();
+                split_for_f9.borrow_mut().set_show_sidebar(open);
+                if open {
+                    if !f9_buttons.iter().any(|b| b.is_active()) {
+                        f9_buttons[0].set_active(true);
+                    }
+                } else {
+                    for b in f9_buttons.iter() {
+                        b.set_active(false);
+                    }
+                }
                 return glib::Propagation::Stop;
             }
             glib::Propagation::Proceed

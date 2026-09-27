@@ -1,4 +1,7 @@
-//! Utility pane (right sidebar sections).
+//! Utility sidebar: three independently-selectable panels (Preset, Signal
+//! Analyzer, Headroom) held in a `gtk4::Stack`. The header's three buttons
+//! switch `container`'s visible child, so only one panel shows at a time
+//! and the user never has to scroll a single mega-column.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -10,11 +13,15 @@ use crate::window_graph;
 use crate::window_headroom;
 use crate::window_presets;
 
-/// Utility pane widget containing preset section and system section.
+/// Stack page names (used by the header buttons to switch panels).
+pub const PAGE_PRESET: &str = "preset";
+pub const PAGE_ANALYZER: &str = "analyzer";
+pub const PAGE_HEADROOM: &str = "headroom";
+
+/// Utility sidebar holding the three panels in a `Stack`.
 pub struct UtilityPane {
-    pub container: gtk4::ScrolledWindow,
-    pub preset_section: gtk4::Box,
-    pub system_section: gtk4::Box,
+    /// The sidebar: a `Stack` whose visible child is the selected panel.
+    pub container: gtk4::Stack,
     pub analyzer: Rc<RefCell<window_analyzer::AnalyzerPanel>>,
     pub headroom: Rc<RefCell<window_headroom::HeadroomPanel>>,
     pub graph: Rc<RefCell<window_graph::EqGraph>>,
@@ -25,6 +32,8 @@ pub struct UtilityPane {
     pub monitor_loudness_value: gtk4::Label,
     /// "On · -23 LUFS" summary label in the monitor strip.
     pub monitor_summary: gtk4::Label,
+    /// A/B compare (EQ bypass) switch.
+    pub bypass_switch: gtk4::Switch,
 }
 
 impl UtilityPane {
@@ -35,33 +44,45 @@ impl UtilityPane {
         let presets = window_presets::PresetPanel::new();
         presets.borrow_mut().start_file_monitoring();
 
-        let container = gtk4::ScrolledWindow::new();
-        // Vertical-only scrolling: the panel content is laid out to fit the
-        // sidebar width, so a horizontal scrollbar is never wanted (it was
-        // appearing because the content min-width exceeded the sidebar max).
-        container.set_policy(gtk4::PolicyType::Never, gtk4::PolicyType::Automatic);
-        container.set_vexpand(true);
-        container.set_hexpand(true);
+        // --- Preset page: the preset panel (has its own scrollable list).
+        let preset_page = Self::scroll_page(presets.borrow().widget());
 
-        let main_box = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
-        main_box.set_margin_top(8);
-        main_box.set_margin_bottom(8);
-        main_box.set_margin_start(8);
-        main_box.set_margin_end(8);
+        // --- Signal Analyzer page: spectrum + monitor strip.
+        let (monitor_panel, monitor_switch, monitor_loudness_value, monitor_summary) =
+            Self::build_monitor_panel();
+        let analyzer_box = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
+        analyzer_box.set_margin_top(8);
+        analyzer_box.set_margin_bottom(8);
+        analyzer_box.set_margin_start(8);
+        analyzer_box.set_margin_end(8);
+        analyzer_box.append(analyzer.borrow().widget());
+        analyzer_box.append(&monitor_panel);
+        let analyzer_page = Self::scroll_page(&analyzer_box);
 
-        let preset_section = Self::build_preset_section(&presets);
-        main_box.append(&preset_section);
+        // --- Headroom page: preamp + peak meter + auto-safe + A/B compare.
+        let headroom_box = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
+        headroom_box.set_margin_top(8);
+        headroom_box.set_margin_bottom(8);
+        headroom_box.set_margin_start(8);
+        headroom_box.set_margin_end(8);
+        let bypass_switch = Self::build_compare_row();
+        headroom_box.append(&bypass_switch.0);
+        headroom_box.append(headroom.borrow().widget());
+        let headroom_page = Self::scroll_page(&headroom_box);
+        let bypass_switch = bypass_switch.1;
 
-        let (system_section, monitor_switch, monitor_loudness_value, monitor_summary) =
-            Self::build_system_section(&analyzer, &headroom);
-        main_box.append(&system_section);
-
-        container.set_child(Some(&main_box));
+        // --- Stack: the three pages, Preset shown by default.
+        let stack = gtk4::Stack::new();
+        stack.set_hhomogeneous(false);
+        stack.set_vhomogeneous(false);
+        stack.set_transition_type(gtk4::StackTransitionType::SlideLeftRight);
+        stack.add_titled(&preset_page, Some(PAGE_PRESET), "Preset");
+        stack.add_titled(&analyzer_page, Some(PAGE_ANALYZER), "Analyzer");
+        stack.add_titled(&headroom_page, Some(PAGE_HEADROOM), "Headroom");
+        stack.set_visible_child_name(PAGE_PRESET);
 
         Self {
-            container,
-            preset_section,
-            system_section,
+            container: stack,
             analyzer,
             headroom,
             graph,
@@ -69,71 +90,36 @@ impl UtilityPane {
             monitor_switch,
             monitor_loudness_value,
             monitor_summary,
+            bypass_switch,
         }
     }
 
-    fn build_preset_section(presets: &Rc<RefCell<window_presets::PresetPanel>>) -> gtk4::Box {
-        let section = gtk4::Box::new(gtk4::Orientation::Vertical, 6);
-        section.set_css_classes(&["utility-section"]);
-
-        section.append(presets.borrow().widget());
-
-        section
+    /// Wrap a panel in a vertically-scrolling ScrolledWindow so a tall panel
+    /// degrades gracefully instead of overflowing the sidebar.
+    fn scroll_page(child: &impl IsA<gtk4::Widget>) -> gtk4::ScrolledWindow {
+        let sw = gtk4::ScrolledWindow::new();
+        sw.set_policy(gtk4::PolicyType::Never, gtk4::PolicyType::Automatic);
+        sw.set_vexpand(true);
+        sw.set_hexpand(true);
+        sw.set_child(Some(child));
+        sw
     }
 
-    fn build_system_section(
-        analyzer: &Rc<RefCell<window_analyzer::AnalyzerPanel>>,
-        headroom: &Rc<RefCell<window_headroom::HeadroomPanel>>,
-    ) -> (gtk4::Box, gtk4::Switch, gtk4::Label, gtk4::Label) {
-        let section = gtk4::Box::new(gtk4::Orientation::Vertical, 6);
-        section.set_css_classes(&["utility-section"]);
-
-        let header = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
-        let title = gtk4::Label::new(Some("Signal"));
-        title.set_css_classes(&["heading"]);
-        header.append(&title);
-
-        let spacer = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
-        spacer.set_hexpand(true);
-        header.append(&spacer);
-
-        let state_chip = gtk4::Label::new(Some("Active"));
-        state_chip.set_css_classes(&["system-state-chip"]);
-        state_chip.set_width_chars(11);
-        header.append(&state_chip);
-        section.append(&header);
-
+    /// A/B compare (EQ bypass) row for the headroom page. Returns the row
+    /// box and the bypass switch.
+    fn build_compare_row() -> (gtk4::Box, gtk4::Switch) {
         let compare_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
         compare_row.set_css_classes(&["compare-row"]);
-        let compare_label = gtk4::Label::new(Some("A/B"));
+        let compare_label = gtk4::Label::new(Some("A/B Compare"));
         compare_label.set_css_classes(&["metric-title"]);
+        compare_label.set_hexpand(true);
         compare_row.append(&compare_label);
-
-        let compare_spacer = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
-        compare_spacer.set_hexpand(true);
-        compare_row.append(&compare_spacer);
 
         let bypass_switch = gtk4::Switch::new();
         bypass_switch.set_valign(gtk4::Align::Center);
-        bypass_switch.set_tooltip_text(Some("A/B Compare"));
+        bypass_switch.set_tooltip_text(Some("Bypass the EQ to compare with/without"));
         compare_row.append(&bypass_switch);
-        section.append(&compare_row);
-
-        section.append(analyzer.borrow().widget());
-
-        let headroom_panel = headroom.borrow();
-        section.append(headroom_panel.widget());
-
-        let (monitor_panel, monitor_switch, monitor_loudness_value, monitor_summary) =
-            Self::build_monitor_panel();
-        section.append(&monitor_panel);
-
-        (
-            section,
-            monitor_switch,
-            monitor_loudness_value,
-            monitor_summary,
-        )
+        (compare_row, bypass_switch)
     }
 
     fn build_monitor_panel() -> (gtk4::Box, gtk4::Switch, gtk4::Label, gtk4::Label) {
@@ -222,8 +208,9 @@ impl UtilityPane {
         (panel, monitor_switch, loudness_value, summary_label)
     }
 
-    pub fn widget(&self) -> &gtk4::ScrolledWindow {
-        &self.container
+    /// Show a specific panel by page name (called by the header buttons).
+    pub fn show_page(&self, page: &str) {
+        self.container.set_visible_child_name(page);
     }
 }
 
