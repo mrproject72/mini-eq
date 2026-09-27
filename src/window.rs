@@ -337,8 +337,10 @@ impl MiniEqWindow {
                     guard.set(false);
                 });
             }
-            // Preset is the default active panel.
-            preset_btn.set_active(true);
+            // Default the sidebar to the Preset page, but keep it CLOSED on
+            // startup: the user opens it explicitly. (Activating the button
+            // here would auto-open the sidebar via the toggled handler.)
+            stack.set_visible_child_name(crate::window_utility::PAGE_PRESET);
         }
 
         // Breakpoints: 1320sp collapses sidebar/pins END, 1080sp compacts toolbar/faders
