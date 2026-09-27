@@ -289,7 +289,10 @@ impl MiniEqWindow {
         let split_view_for_bp = split_view.clone();
         let band_scrolled_for_narrow = band_scrolled.clone();
         narrow_bp.connect_apply(move |_| {
-            split_view_for_bp.borrow_mut().set_collapsed(true);
+            // NOTE: do NOT set_collapsed(true) here. Upstream has no breakpoints
+            // and never force-collapses the utility pane; doing so made the right
+            // panel vanish whenever the layout re-evaluated (e.g. on a click that
+            // changed the band editor). Keep the layout compaction only.
             split_view_for_bp
                 .borrow_mut()
                 .set_sidebar_position(gtk4::PackType::End);
@@ -298,7 +301,6 @@ impl MiniEqWindow {
         let split_view_for_bp = split_view.clone();
         let band_scrolled_for_narrow = band_scrolled.clone();
         narrow_bp.connect_unapply(move |_| {
-            split_view_for_bp.borrow_mut().set_collapsed(false);
             split_view_for_bp
                 .borrow_mut()
                 .set_sidebar_position(gtk4::PackType::Start);
@@ -405,7 +407,8 @@ impl MiniEqWindow {
                     if let Some(be) = backend.borrow_mut().as_mut() {
                         if !engine_sink.is_empty() {
                             let _ = be.set_preamp(preamp_db);
-                            match be.update_band_coefficients(&bands, &engine_sink) {
+                            *be.get_bands_mut() = bands.clone();
+                            match be.update_state_live_or_reload(&engine_sink) {
                                 Ok(()) => {
                                     log::debug!("Backend state applied");
                                 }

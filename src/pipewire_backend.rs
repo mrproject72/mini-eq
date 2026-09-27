@@ -1,7 +1,14 @@
+use std::cell::RefCell;
 use std::ffi::CString;
+use std::mem::MaybeUninit;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use log::{debug, info, warn};
+use pipewire::node::Node;
+use pipewire::spa::param::ParamType;
+use pipewire::spa::pod::Pod;
+use pipewire::spa::pod::builder::Builder;
 use pipewire::{Error, context::ContextRc, core::CoreRc, loop_::Timeout, main_loop::MainLoopRc};
 use pipewire_sys as pw_sys;
 
@@ -35,6 +42,13 @@ pub struct PipeWireBackend {
     preamp_gain: f64,
     running: Arc<Mutex<bool>>,
     routing: RoutingEngine,
+    /// Live proxy for the filter-chain virtual sink node (`mini_eq_sink`).
+    /// Captured by the registry listener once the module creates it; used by
+    /// `apply_live_controls` to push `SPA_PARAM_Props` without a reload.
+    filter_node: Rc<RefCell<Option<Node>>>,
+    /// Kept alive so the registry `global` listener stays registered for the
+    /// backend's lifetime (listeners unregister themselves when dropped).
+    _registry_listener: Option<pipewire::registry::Listener>,
 }
 
 impl PipeWireBackend {
@@ -60,21 +74,131 @@ impl PipeWireBackend {
             preamp_gain: 0.0,
             running: Arc::new(Mutex::new(true)),
             routing,
+            filter_node: Rc::new(RefCell::new(None)),
+            _registry_listener: None,
         };
 
-        backend.setup_registry_listener()?;
+        let registry_listener = backend.setup_registry_listener()?;
+        let backend = PipeWireBackend {
+            _registry_listener: Some(registry_listener),
+            ..backend
+        };
 
         Ok(backend)
     }
 
-    fn setup_registry_listener(&self) -> Result<(), Error> {
-        let registry = self.core.get_registry()?;
+    fn setup_registry_listener(&self) -> Result<pipewire::registry::Listener, Error> {
+        let registry = self.core.get_registry_rc()?;
+        let filter_node = self.filter_node.clone();
+        let registry_for_cb = registry.clone();
         let listener = registry.add_listener_local();
-        let listener = listener.global(|global| {
+        let listener = listener.global(move |global| {
             debug!("Registry global: id={} type={:?}", global.id, global.type_);
+            if global.type_.to_str() != pipewire::types::ObjectType::Node.to_str() {
+                return;
+            }
+            let is_eq_sink = global
+                .props
+                .as_ref()
+                .and_then(|p| p.get("node.name"))
+                .map(|n| n == VIRTUAL_SINK_BASE)
+                .unwrap_or(false);
+            if is_eq_sink && filter_node.borrow().is_none() {
+                match registry_for_cb.bind::<Node, _>(global) {
+                    Ok(node) => {
+                        info!(
+                            "Captured live filter node proxy: {} (id={})",
+                            VIRTUAL_SINK_BASE, global.id
+                        );
+                        *filter_node.borrow_mut() = Some(node);
+                    }
+                    Err(e) => warn!("Failed to bind filter node: {}", e),
+                }
+            }
         });
         let _listener = listener.register();
-        Ok(())
+        Ok(_listener)
+    }
+
+    /// Push the current band/preamp state to the live filter node via
+    /// `SPA_PARAM_Props`, mirroring upstream `set_node_params` /
+    /// `apply_state_to_engine`. This changes the DSP in milliseconds without
+    /// tearing down (and re-linking) the graph.
+    ///
+    /// Returns `Ok(false)` if the live node proxy is not available yet (caller
+    /// should fall back to a module reload).
+    pub fn apply_live_controls(&self, eq_enabled: bool) -> Result<bool, Error> {
+        let node_borrow = self.filter_node.borrow();
+        let node = match node_borrow.as_ref() {
+            Some(n) => n,
+            None => return Ok(false),
+        };
+
+        let controls =
+            filter_chain::native_biquad_control_values(&self.bands, self.preamp_gain, eq_enabled);
+        if controls.is_empty() {
+            return Ok(true);
+        }
+
+        // Build the SPA_PARAM_Props object whose `params` property is a struct
+        // of alternating (control-name string, value double) pairs — the exact
+        // wire format parsed by filter-graph's `parse_params`.
+        let mut data: Vec<u8> = Vec::new();
+        {
+            let mut builder = Builder::new(&mut data);
+            let mut obj_frame = MaybeUninit::zeroed();
+            let mut struct_frame = MaybeUninit::zeroed();
+
+            // SAFETY: frames are kept alive until popped; the builder owns its
+            // data buffer and is dropped before we read `data`.
+            unsafe {
+                builder
+                    .push_object(
+                        &mut obj_frame,
+                        pipewire::spa::utils::SpaTypes::ObjectParamProps.as_raw(),
+                        ParamType::Props.as_raw(),
+                    )
+                    .map_err(|_| Error::CreationFailed)?;
+                // SPA_Props_params == 0x80000 (SPA StartOther base + Params).
+                builder
+                    .add_prop(0x80000, 0)
+                    .map_err(|_| Error::CreationFailed)?;
+                builder
+                    .push_struct(&mut struct_frame)
+                    .map_err(|_| Error::CreationFailed)?;
+                for (name, value) in &controls {
+                    builder
+                        .add_string(name)
+                        .map_err(|_| Error::CreationFailed)?;
+                    builder
+                        .add_double(*value)
+                        .map_err(|_| Error::CreationFailed)?;
+                }
+                builder.pop(struct_frame.assume_init_mut());
+                builder.pop(obj_frame.assume_init_mut());
+            }
+        }
+
+        let pod = Pod::from_bytes(&data).ok_or(Error::CreationFailed)?;
+        node.set_param(ParamType::Props, 0, pod);
+        debug!(
+            "apply_live_controls: pushed {} control(s) to {}",
+            controls.len(),
+            VIRTUAL_SINK_BASE
+        );
+        Ok(true)
+    }
+
+    /// Update the DSP for new bands WITHOUT a reload when the live node is
+    /// available; otherwise fall back to a full module reload.
+    pub fn update_state_live_or_reload(&mut self, output_sink: &str) -> Result<(), Error> {
+        match self.apply_live_controls(true) {
+            Ok(true) => Ok(()),
+            _ => {
+                let bands = self.bands.clone();
+                self.update_band_coefficients(&bands, output_sink)
+            }
+        }
     }
 
     /// Build the filter-chain argument string for the current bands.
