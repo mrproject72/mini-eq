@@ -122,9 +122,23 @@ mini_eq_sink_output -> alsa_output.pci-0000_04_00.6.analog-stereo
 
 ## 4. Live control path (already fixed, for reference)
 
+**Two distinct control schemes in the filter-chain graph — do not mix them up:**
+
+- **Band nodes** (`band_<side>_<i>`): a builtin filter + a `mixer`.
+  Live controls: `band_<side>_<i>_filter:Freq`, `…:Q`, `…:Gain`,
+  and mixer weights `band_<side>_<i>:Gain 1` (wet) / `:Gain 2` (dry).
+- **Preamp node** (`preamp_<side>`): a **`bq_raw`** node (label=bq_raw). Its
+  gain is carried in the **raw biquad coefficients**, so the live control is
+  `preamp_<side>:b0` … `:a2` (scaled for the ±10 control range), NOT mixer
+  `Gain 1/2`. Mirrors upstream `builtin_biquad_preamp_control_values` →
+  `biquad_coefficients_to_controls`.
+  - Bug fixed 2026-09-27: the Rust port pushed `preamp_l:Gain 1/2` (mixer),
+    which doesn't exist on a `bq_raw` node → "Set Safe" lowered the graph but
+    never changed the actual output. Now pushes `preamp_<side>:b0..a2`.
+
+Other live-control notes:
 - Slider edits (Freq/Q/Gain) push `SPA_PARAM_Props` to the live `mini_eq_sink`
   node proxy via `apply_live_controls` (mirrors upstream `set_node_params`).
-- Control name format: `band_<side>_<idx>_filter:Freq`, `band_<side>_<idx>:Gain 1`, etc.
 - **`SPA_Props_params` key = `0x80001` (524289)**, confirmed via `pw-cli`
   echo `Props:params (524289)`. (The old `0x80000` was wrong.)
 - Filter-**type** changes are topology changes → restart the filter-chain module
