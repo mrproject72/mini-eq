@@ -124,11 +124,16 @@ impl EqGraph {
         title.set_css_classes(&["heading"]);
         header.append(&title);
 
-        // Push the monitor switch to the right edge of the title row, right
+        // Push the monitor control to the right edge of the title row, right
         // above the spectrum box.
         let header_spacer = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
         header_spacer.set_hexpand(true);
         header.append(&header_spacer);
+
+        let monitor_label = gtk4::Label::new(Some("Monitor"));
+        monitor_label.set_valign(gtk4::Align::Center);
+        monitor_label.set_css_classes(&["monitor-toggle-label"]);
+        header.append(&monitor_label);
 
         let monitor_switch = gtk4::Switch::new();
         monitor_switch.set_valign(gtk4::Align::Center);

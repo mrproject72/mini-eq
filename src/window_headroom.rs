@@ -141,12 +141,10 @@ impl HeadroomPanel {
         preamp_box.append(&preamp_spin);
         container.append(&preamp_box);
 
-        let auto_safe_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
-        let auto_safe_label = gtk4::Label::new(Some("Auto-Safe"));
-        auto_safe_box.append(&auto_safe_label);
-        auto_safe_box.append(&auto_safe_switch);
-        auto_safe_box.set_halign(gtk4::Align::Start);
-        container.append(&auto_safe_box);
+        // NOTE: the Auto-Safe switch is placed in the MAIN window (between
+        // the spectrum and the faders) by build_main_layout, not here. The
+        // switch widget + its wiring still live on this panel and are
+        // reparented there.
 
         container.append(&peak_label);
         container.append(&meter_area);

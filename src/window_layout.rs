@@ -85,6 +85,19 @@ pub fn build_main_layout(
 
     main_box.append(utility.graph.borrow().widget());
 
+    // Auto-Safe control: centered between the spectrum analyzer and the
+    // fader row. The switch widget + wiring live on the Headroom panel and
+    // are placed here for quick, prominent access.
+    let auto_safe_switch = utility.headroom.borrow().auto_safe_switch.clone();
+    let auto_safe_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+    auto_safe_row.set_halign(gtk4::Align::Center);
+    auto_safe_row.set_css_classes(&["auto-safe-row"]);
+    let auto_safe_label = gtk4::Label::new(Some("Auto-Safe"));
+    auto_safe_label.set_valign(gtk4::Align::Center);
+    auto_safe_row.append(&auto_safe_label);
+    auto_safe_row.append(&auto_safe_switch);
+    main_box.append(&auto_safe_row);
+
     let (band_scrolled, faders) = build_band_faders(visible_bands, selection_changed_callback);
     main_box.append(&band_scrolled);
 
