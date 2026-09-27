@@ -196,6 +196,55 @@ pub fn native_biquad_control_values(
     controls
 }
 
+/// Control values for a `bq_raw` band node: the raw biquad coefficients
+/// (`b0..a2`), which fully encode the filter TYPE along with Freq/Q/Gain.
+///
+/// This is the upstream DEFAULT strategy (`native_biquads=False`). Because
+/// the type lives in the coefficients and the node `label` is always
+/// `bq_raw`, the graph topology never changes: a filter-type edit is just a
+/// live coefficient push, so the engine never needs to be torn down and
+/// reloaded (and the sink node id / app routing stays stable). Mirrors
+/// upstream `builtin_biquad_band_control_values`.
+pub fn bq_raw_band_control_values(
+    index: usize,
+    band: &EqBand,
+    eq_enabled: bool,
+    sample_rate: f64,
+    solo_active: bool,
+) -> Vec<(String, f64)> {
+    let coefficients = active_band_biquad_coefficients(band, sample_rate, eq_enabled, solo_active);
+    let mut controls = Vec::new();
+    for side in ["l", "r"] {
+        controls.extend(biquad_coefficients_to_controls(
+            &biquad_node_name(side, index),
+            &coefficients,
+        ));
+    }
+    controls
+}
+
+/// All `bq_raw` control values (preamp + every band), mirroring upstream
+/// `builtin_biquad_control_values`.
+pub fn bq_raw_control_values(
+    bands: &[EqBand],
+    preamp_db: f64,
+    eq_enabled: bool,
+    sample_rate: f64,
+) -> Vec<(String, f64)> {
+    let mut controls = native_biquad_preamp_control_values(preamp_db, eq_enabled);
+    let solo_active = bands_have_solo(bands);
+    for (index, band) in bands.iter().take(MAX_BANDS).enumerate() {
+        controls.extend(bq_raw_band_control_values(
+            index,
+            band,
+            eq_enabled,
+            sample_rate,
+            solo_active,
+        ));
+    }
+    controls
+}
+
 fn format_coefficients(coefficients: &BiquadCoefficients) -> String {
     let (b0, b1, b2, a0, a1, a2) = coefficients.as_tuple();
     format!(
@@ -624,5 +673,74 @@ mod tests {
         let raw_links = build_biquad_links(2, false);
         assert!(raw_links.contains("\"preamp_l:Out\" input = \"band_l_0:In\""));
         assert!(!raw_links.contains("_filter:In"));
+    }
+
+    #[test]
+    fn bq_raw_band_control_values_are_coefficients_for_both_sides() {
+        let mut bands = default_bands();
+        bands[0].filter_type = crate::core::FilterType::Bell;
+        bands[0].frequency = 1000.0;
+        bands[0].gain_db = 6.0;
+        bands[0].q = 1.0;
+
+        let controls = bq_raw_band_control_values(0, &bands[0], true, 48000.0, false);
+        let names: Vec<&str> = controls.iter().map(|(k, _)| k.as_str()).collect();
+
+        // bq_raw pushes the coefficient set for BOTH channels, NOT the
+        // native Freq/Q/Gain or mixer Gain 1/2 controls.
+        for side in ["l", "r"] {
+            for c in ["b0", "b1", "b2", "a0", "a1", "a2"] {
+                assert!(
+                    names.contains(&format!("band_{side}_0:{c}").as_str()),
+                    "missing band_{side}_0:{c} in {names:?}"
+                );
+            }
+        }
+        assert!(
+            !names
+                .iter()
+                .any(|n| n.contains(":Freq") || n.contains(":Q"))
+        );
+        assert!(
+            !names
+                .iter()
+                .any(|n| n.contains("Gain 1") || n.contains("Gain 2"))
+        );
+    }
+
+    #[test]
+    fn bq_raw_encodes_filter_type_in_coefficients() {
+        // Same Freq/Q/Gain, different filter TYPE -> different coefficients.
+        // This is what makes a type change a live push (no topology reload).
+        let mk = |ft: crate::core::FilterType| {
+            let mut b = default_bands();
+            b[0].filter_type = ft;
+            b[0].frequency = 1000.0;
+            b[0].gain_db = 6.0;
+            b[0].q = 1.0;
+            bq_raw_band_control_values(0, &b[0], true, 48000.0, false)
+        };
+        let bell = mk(crate::core::FilterType::Bell);
+        let lowshelf = mk(crate::core::FilterType::LoShelf);
+        let get = |c: &[(String, f64)], k: &str| c.iter().find(|(n, _)| n == k).unwrap().1;
+        // At least one coefficient must differ between the two types.
+        let differs = ["b0", "b1", "b2", "a1", "a2"].iter().any(|c| {
+            (get(&bell, &format!("band_l_0:{c}")) - get(&lowshelf, &format!("band_l_0:{c}"))).abs()
+                > 1e-6
+        });
+        assert!(differs, "filter type must change the bq_raw coefficients");
+    }
+
+    #[test]
+    fn bq_raw_control_values_cover_preamp_and_all_bands() {
+        let bands = default_bands();
+        let controls = bq_raw_control_values(&bands, 0.0, true, 48000.0);
+        // Preamp (both sides) + MAX_BANDS bands (both sides), 6 coeffs each.
+        let has = |n: &str| controls.iter().any(|(k, _)| k == n);
+        assert!(has("preamp_l:b0"));
+        assert!(has("preamp_r:a2"));
+        assert!(has(&format!("band_l_{}:b0", MAX_BANDS - 1)));
+        assert!(has(&format!("band_r_{}:a2", MAX_BANDS - 1)));
+        assert_eq!(controls.len(), (1 + MAX_BANDS) * 2 * 6);
     }
 }
