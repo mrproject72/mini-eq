@@ -323,12 +323,15 @@ impl MiniEqWindow {
             // NOTE: do NOT set_collapsed(true) or swap sidebar position here.
             // The utility panel stays pinned to the End (right) at all sizes;
             // swapping it made the panel jump sides on resize. Keep only the
-            // height compaction.
-            band_scrolled_for_narrow.set_min_content_height(150);
+            // height compaction. Must stay >= the fader height or the fader's
+            // bottom (Q label + border) gets clipped. In this width range the
+            // faders are 182 (initial) or 208 (after a compact->wide cycle),
+            // so use 208 to cover the tallest case.
+            band_scrolled_for_narrow.set_min_content_height(208);
         });
         let band_scrolled_for_narrow = band_scrolled.clone();
         narrow_bp.connect_unapply(move |_| {
-            band_scrolled_for_narrow.set_min_content_height(200);
+            band_scrolled_for_narrow.set_min_content_height(208);
         });
 
         let band_faders_for_compact = band_faders.clone();
@@ -343,7 +346,7 @@ impl MiniEqWindow {
             graph_for_compact
                 .borrow_mut()
                 .set_mode(crate::window_graph::GraphMode::Compact);
-            band_scrolled_for_compact.set_min_content_height(150);
+            band_scrolled_for_compact.set_min_content_height(164);
         });
         let band_faders_for_compact = band_faders.clone();
         let analyzer_for_compact = utility.analyzer.clone();
@@ -357,7 +360,7 @@ impl MiniEqWindow {
             graph_for_compact
                 .borrow_mut()
                 .set_mode(crate::window_graph::GraphMode::Default);
-            band_scrolled_for_compact.set_min_content_height(200);
+            band_scrolled_for_compact.set_min_content_height(208);
         });
 
         window.add_breakpoint(narrow_bp);
