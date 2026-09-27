@@ -86,13 +86,16 @@ pub fn build_main_layout(
     let split_view = adw::OverlaySplitView::new();
     split_view.set_content(Some(&main_box));
     split_view.set_sidebar(Some(&utility.container));
-    split_view.set_pin_sidebar(true);
-    split_view.set_collapsed(false);
-    // Keep the utility panel on the RIGHT at every window size. The old
-    // breakpoint logic flipped it Start(left)/End(right) depending on width,
-    // which made it jump sides when resizing.
+    // Overlay mode: the main content keeps the FULL width and the utility
+    // panel slides OVER it from the right, instead of squeezing the content
+    // inline. Gives the main window maximum space.
+    split_view.set_pin_sidebar(false);
+    // Hidden by default; revealed via the toggle (F9 / header button) or the
+    // right-edge handle.
+    split_view.set_collapsed(true);
+    // Keep the utility panel on the RIGHT at every window size.
     split_view.set_sidebar_position(gtk4::PackType::End);
-    split_view.set_sidebar_width_fraction(0.28);
+    split_view.set_sidebar_width_fraction(0.32);
     split_view.set_min_sidebar_width(300.0);
     split_view.set_max_sidebar_width(440.0);
 

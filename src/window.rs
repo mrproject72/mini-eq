@@ -110,8 +110,9 @@ impl MiniEqWindow {
         let inspector_button = gtk4::ToggleButton::new();
         inspector_button.set_icon_name("sidebar-show-symbolic");
         inspector_button.set_tooltip_text(Some("Toggle side panel (F9)"));
-        // Reflect the panel's initial expanded state.
-        inspector_button.set_active(true);
+        // Panel is collapsed (hidden) by default; the toggle reveals it as an
+        // overlay over the full-width main content.
+        inspector_button.set_active(false);
         header_bar.pack_end(&inspector_button);
 
         // Build main layout with utility pane.
