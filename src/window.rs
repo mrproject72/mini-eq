@@ -390,11 +390,22 @@ impl MiniEqWindow {
                         }
                     })
                     .collect();
-                {
-                    let mut g = graph.borrow_mut();
-                    g.update(0.0, 1000.0, 1.0, crate::core::FilterType::Bell, &bands, &[]);
-                }
                 let preamp_db = headroom.borrow().preamp_value();
+                {
+                    // Overlay reflects the *selected* band's actual controls,
+                    // not a hardcoded Bell. Previously the type was pinned to
+                    // Bell so switching filter types never changed the curve.
+                    let selected = band_faders.iter().find(|f| f.borrow().selected);
+                    let (sel_freq, sel_q, sel_type) = match selected {
+                        Some(f) => {
+                            let f = f.borrow();
+                            (f.frequency, f.q_value, f.filter_type)
+                        }
+                        None => (1000.0, 1.0, crate::core::FilterType::Bell),
+                    };
+                    let mut g = graph.borrow_mut();
+                    g.update(preamp_db, sel_freq, sel_q, sel_type, &bands, &[]);
+                }
                 headroom.borrow_mut().update_curve_peak(&bands, preamp_db);
 
                 // Push UI state to the PipeWire engine (debounced).

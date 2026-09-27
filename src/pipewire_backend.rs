@@ -46,6 +46,11 @@ pub struct PipeWireBackend {
     /// Captured by the registry listener once the module creates it; used by
     /// `apply_live_controls` to push `SPA_PARAM_Props` without a reload.
     filter_node: Rc<RefCell<Option<Node>>>,
+    /// The band filter-types the currently-loaded module was built with.
+    /// Native biquad labels are graph *topology*, not mutable controls: a
+    /// type/preset change requires a module restart, while ordinary
+    /// frequency/Q/gain edits stay live. Mirrors upstream `_engine_band_types`.
+    engine_band_types: Vec<crate::core::FilterType>,
     /// Kept alive so the registry `global` listener stays registered for the
     /// backend's lifetime (listeners unregister themselves when dropped).
     _registry_listener: Option<pipewire::registry::Listener>,
@@ -75,6 +80,7 @@ impl PipeWireBackend {
             running: Arc::new(Mutex::new(true)),
             routing,
             filter_node: Rc::new(RefCell::new(None)),
+            engine_band_types: Vec::new(),
             _registry_listener: None,
         };
 
@@ -191,7 +197,25 @@ impl PipeWireBackend {
 
     /// Update the DSP for new bands WITHOUT a reload when the live node is
     /// available; otherwise fall back to a full module reload.
+    ///
+    /// A filter-type change is a graph topology change (the biquad `label`
+    /// is fixed at module-load time), so it forces a restart instead of a
+    /// live push — matching upstream `set_filter_controls`.
     pub fn update_state_live_or_reload(&mut self, output_sink: &str) -> Result<(), Error> {
+        let current_types: Vec<crate::core::FilterType> =
+            self.bands.iter().map(|b| b.filter_type).collect();
+        let types_changed =
+            !self.engine_band_types.is_empty() && current_types != self.engine_band_types;
+
+        if types_changed {
+            info!("Filter-type change detected: restarting engine (topology change)");
+            // Drop the stale proxy so the registry listener re-captures the
+            // freshly-created node after the reload.
+            *self.filter_node.borrow_mut() = None;
+            self.unload_filter_chain_module();
+            return self.create_filter_chain(output_sink);
+        }
+
         match self.apply_live_controls(true) {
             Ok(true) => Ok(()),
             _ => {
@@ -246,6 +270,7 @@ impl PipeWireBackend {
         }
 
         self.filter_chain_module = Some(ModuleHandle(module));
+        self.engine_band_types = self.bands.iter().map(|b| b.filter_type).collect();
         info!("Filter-chain module loaded");
         Ok(())
     }
