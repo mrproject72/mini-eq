@@ -1,5 +1,7 @@
 //! Mini EQ — main entry point.
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -254,20 +256,35 @@ fn launch_gui(_background_mode: bool, auto_route: bool, output_sink: Option<Stri
 
     let app_state = AppState::new();
 
-    // Initialize PipeWire backend. It is owned here rather than in `AppState`
-    // because it wraps `MainLoopRc` and is neither `Send` nor `Sync`.
-    let mut backend = PipeWireBackend::new(default_bands()).ok();
-    if let Some(backend) = backend.as_mut() {
-        let sink = output_sink.as_deref().unwrap_or("mini_eq_sink_output");
-        // The filter-chain module creates the virtual sink and output node;
-        // routing is configured separately.
-        if let Err(e) = backend.create_filter_chain(sink) {
-            log::warn!("Failed to load filter chain: {}", e);
-        }
-        if auto_route {
-            if let Err(e) = backend.auto_route_to_sink(sink) {
-                log::warn!("Failed to auto-route: {}", e);
+    // Initialize the PipeWire backend. It is shared with the window so UI edits
+    // can be pushed to the filter-chain engine. It stays on the GTK thread —
+    // the window's update loop pumps the PipeWire main loop via `pump()`.
+    let shared_backend: Rc<RefCell<Option<PipeWireBackend>>> = Rc::new(RefCell::new(None));
+    let mut engine_sink = String::new();
+    {
+        match PipeWireBackend::new(default_bands()) {
+            Ok(mut backend) => {
+                let sink = output_sink.or_else(|| backend.default_output_sink());
+                match sink {
+                    Some(sink) => {
+                        engine_sink = sink.clone();
+                        match backend.create_filter_chain(&sink) {
+                            Ok(()) => log::info!("Filter-chain engine running -> {}", sink),
+                            Err(e) => log::warn!("Failed to load filter chain: {}", e),
+                        }
+                        if auto_route {
+                            if let Err(e) =
+                                backend.auto_route_to_sink(mini_eq::core::VIRTUAL_SINK_BASE)
+                            {
+                                log::warn!("Failed to auto-route: {}", e);
+                            }
+                        }
+                    }
+                    None => log::warn!("No output sink detected; engine not started"),
+                }
+                *shared_backend.borrow_mut() = Some(backend);
             }
+            Err(e) => log::warn!("Failed to connect to PipeWire: {}", e),
         }
     }
 
@@ -277,8 +294,14 @@ fn launch_gui(_background_mode: bool, auto_route: bool, output_sink: Option<Stri
         log::warn!("Failed to register D-Bus control: {}", e);
     }
 
+    let backend_for_activate = shared_backend.clone();
+    let sink_for_activate = engine_sink.clone();
     app.connect_activate(move |app| {
-        let window = mini_eq::window::MiniEqWindow::new(app);
+        let window = mini_eq::window::MiniEqWindow::new(
+            app,
+            backend_for_activate.clone(),
+            sink_for_activate.clone(),
+        );
         window.present();
     });
 

@@ -8,6 +8,7 @@ use adw::prelude::*;
 use glib::ControlFlow;
 
 use crate::appearance::{AppearancePreference, apply_appearance_preference};
+use crate::pipewire_backend::PipeWireBackend;
 use crate::style;
 use crate::window_band_editor::{BandEditor, BandEditorCallbacks};
 use crate::window_layout;
@@ -52,7 +53,11 @@ pub struct MiniEqWindow {
 }
 
 impl MiniEqWindow {
-    pub fn new(app: &adw::Application) -> Self {
+    pub fn new(
+        app: &adw::Application,
+        backend: Rc<RefCell<Option<PipeWireBackend>>>,
+        engine_sink: String,
+    ) -> Self {
         let window = adw::ApplicationWindow::new(app);
         let (default_width, default_height) = window_state::initial_window_default_size();
         window.set_default_size(default_width, default_height);
@@ -352,11 +357,20 @@ impl MiniEqWindow {
         });
         window.add_controller(key_controller);
 
-        // Start real-time update loop for graph + headroom
+        // Start real-time update loop for graph + headroom + backend push
         {
             let graph = utility.graph.clone();
             let headroom = utility.headroom.clone();
             let band_faders = band_faders.clone();
+            let backend = backend.clone();
+            let engine_sink = engine_sink.clone();
+            // Debounce state: only reload the filter-chain when the effective
+            // state actually changed and at most every 400 ms, so fader drags
+            // do not thrash the module.
+            let last_pushed_sig = Rc::new(RefCell::new(String::new()));
+            let last_push = Rc::new(RefCell::new(
+                std::time::Instant::now() - std::time::Duration::from_millis(500),
+            ));
             glib::timeout_add_local(std::time::Duration::from_millis(33), move || {
                 let bands: Vec<crate::core::EqBand> = band_faders
                     .iter()
@@ -380,7 +394,66 @@ impl MiniEqWindow {
                 }
                 let preamp_db = headroom.borrow().preamp_value();
                 headroom.borrow_mut().update_curve_peak(&bands, preamp_db);
+
+                // Push UI state to the PipeWire engine (debounced).
+                let sig = crate::core::preset_payload_state_signature(
+                    &crate::core::preset_payload(&bands, preamp_db),
+                );
+                if sig != *last_pushed_sig.borrow()
+                    && last_push.borrow().elapsed() >= std::time::Duration::from_millis(400)
+                {
+                    if let Some(be) = backend.borrow_mut().as_mut() {
+                        if !engine_sink.is_empty() {
+                            let _ = be.set_preamp(preamp_db);
+                            match be.update_band_coefficients(&bands, &engine_sink) {
+                                Ok(()) => {
+                                    log::debug!("Backend state applied");
+                                }
+                                Err(e) => log::warn!("Failed to apply backend state: {}", e),
+                            }
+                        }
+                        // Mark pushed either way so a failing state is not
+                        // retried every tick; further edits change the sig.
+                        *last_pushed_sig.borrow_mut() = sig;
+                        *last_push.borrow_mut() = std::time::Instant::now();
+                    }
+                }
                 ControlFlow::Continue
+            });
+        }
+
+        // Pump the PipeWire main loop from the GTK main loop so registry
+        // events, sync roundtrips and module callbacks are dispatched without
+        // running a second OS thread.
+        {
+            let backend = backend.clone();
+            glib::timeout_add_local(std::time::Duration::from_millis(10), move || {
+                if let Some(be) = backend.borrow().as_ref() {
+                    be.pump();
+                }
+                ControlFlow::Continue
+            });
+        }
+
+        // System-wide EQ switch: route all app playback streams into the
+        // virtual EQ sink (on) / log that unrouting is not yet implemented
+        // (off).
+        {
+            let backend_for_switch = backend.clone();
+            route_switch.connect_state_set(move |_switch, on| {
+                if let Some(be) = backend_for_switch.borrow_mut().as_mut() {
+                    if on {
+                        if let Err(e) = be.auto_route_to_sink(crate::core::VIRTUAL_SINK_BASE) {
+                            log::warn!("System EQ: auto-route failed: {}", e);
+                        }
+                    } else {
+                        log::info!(
+                            "System EQ off: unrouting all streams is not implemented yet; \
+                             move streams back manually (e.g. pavucontrol)"
+                        );
+                    }
+                }
+                glib::Propagation::Proceed
             });
         }
 

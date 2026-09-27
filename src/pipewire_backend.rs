@@ -2,7 +2,7 @@ use std::ffi::CString;
 use std::sync::{Arc, Mutex};
 
 use log::{debug, info, warn};
-use pipewire::{Error, context::ContextRc, core::CoreRc, main_loop::MainLoopRc};
+use pipewire::{Error, context::ContextRc, core::CoreRc, loop_::Timeout, main_loop::MainLoopRc};
 use pipewire_sys as pw_sys;
 
 use crate::core::{EqBand, FILTER_OUTPUT_SUFFIX, VIRTUAL_SINK_BASE};
@@ -129,9 +129,13 @@ impl PipeWireBackend {
     /// Tear down the loaded filter-chain module and its nodes.
     pub fn unload_filter_chain_module(&mut self) {
         if let Some(handle) = self.filter_chain_module.take() {
-            // SAFETY: `handle.0` came from `pw_context_load_module` and is
-            // destroyed exactly once, here.
-            unsafe { pw_sys::pw_impl_module_destroy(handle.0) };
+            // Take the raw pointer out and skip `ModuleHandle::drop`, which
+            // would destroy the same module a second time (double free).
+            let ptr = handle.0;
+            std::mem::forget(handle);
+            // SAFETY: `ptr` came from `pw_context_load_module` and is destroyed
+            // exactly once, here.
+            unsafe { pw_sys::pw_impl_module_destroy(ptr) };
             info!("Filter-chain module unloaded");
         }
     }
@@ -143,6 +147,27 @@ impl PipeWireBackend {
 
     pub fn detect_output_routes(&self) -> Result<Vec<OutputRoute>, Error> {
         self.routing.detect_routes()
+    }
+
+    /// Pump pending PipeWire events without blocking.
+    ///
+    /// The PipeWire `MainLoop` is not run via `run()` in GUI mode; instead the
+    /// UI update loop calls this each tick so registry events, sync roundtrips
+    /// and module callbacks are dispatched on the GTK main thread.
+    pub fn pump(&self) {
+        self.mainloop.loop_().iterate(Timeout::None);
+    }
+
+    /// Name of the active physical output sink, falling back to the first
+    /// detected route. Used as the filter-chain playback target.
+    pub fn default_output_sink(&self) -> Option<String> {
+        self.routing.detect_routes().ok().and_then(|routes| {
+            routes
+                .iter()
+                .find(|r| r.active)
+                .or_else(|| routes.first())
+                .map(|r| r.name.clone())
+        })
     }
 
     pub fn auto_route_to_sink(&mut self, sink_name: &str) -> Result<(), Error> {

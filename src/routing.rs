@@ -8,9 +8,11 @@ use log::{debug, info, warn};
 use pipewire::{
     Error,
     core::{CoreRc, PW_ID_CORE},
+    link::Link,
     loop_::Timeout,
     main_loop::MainLoopRc,
     properties::properties,
+    proxy::ProxyT,
     stream::StreamBox,
     types::ObjectType,
 };
@@ -179,21 +181,122 @@ impl RoutingEngine {
     }
 
     pub fn auto_route_to_sink(&mut self, sink_name: &str) -> Result<(), Error> {
-        info!("Auto-routing all streams to sink: {}", sink_name);
+        info!("Auto-routing all playback streams to sink: {}", sink_name);
 
-        let routes = self.detect_routes()?;
+        let sink_id = match self.find_node_id_by_name(sink_name) {
+            Some(id) => id,
+            None => {
+                warn!(
+                    "Virtual sink node {} not found; cannot auto-route",
+                    sink_name
+                );
+                return Err(Error::CreationFailed);
+            }
+        };
 
-        for route in &routes {
-            if route.name != sink_name {
-                self.create_link(route.id, sink_name)?;
+        let streams = self.list_playback_streams();
+        let mut routed = 0usize;
+        for (node_id, name) in &streams {
+            if name.contains(VIRTUAL_SINK_BASE) || name.contains(OUTPUT_CLIENT_NAME) {
+                continue;
+            }
+            match self.link_nodes(*node_id, sink_id) {
+                Ok(link_id) => {
+                    info!(
+                        "Routed '{}' ({}) -> {} (link {})",
+                        name, node_id, sink_name, link_id
+                    );
+                    routed += 1;
+                }
+                Err(e) => warn!("Failed to route '{}' ({}): {}", name, node_id, e),
             }
         }
 
         self.set_current_sink(sink_name);
         self.auto_route = true;
 
-        info!("Auto-routing complete to: {}", sink_name);
+        info!(
+            "Auto-routing complete: {} stream(s) -> {}",
+            routed, sink_name
+        );
         Ok(())
+    }
+
+    /// Create a PipeWire link between two existing nodes via `link-factory`.
+    ///
+    /// `output_node` is the stream producer (e.g. an app playback stream) and
+    /// `input_node` is the consumer (e.g. the EQ virtual sink).
+    pub fn link_nodes(&self, output_node: u32, input_node: u32) -> Result<u32, Error> {
+        let link_props = properties! {
+            "link.output.node" => output_node.to_string().as_str(),
+            "link.input.node" => input_node.to_string().as_str(),
+        };
+
+        let link = self
+            .core
+            .create_object::<Link>("link-factory", &link_props)
+            .inspect_err(|e| warn!("link-factory create failed: {}", e))?;
+        let lid = link.upcast().id();
+
+        self.links.lock().unwrap().push(RouteInfo {
+            route_id: output_node,
+            source_node: output_node,
+            target_node: input_node,
+            link_id: lid,
+        });
+
+        info!("Created link {} ({} -> {})", lid, output_node, input_node);
+        Ok(lid)
+    }
+
+    /// Find a node id by `node.name`, pumping the loop so registry events
+    /// actually arrive before the lookup is read.
+    pub fn find_node_id_by_name(&self, name: &str) -> Option<u32> {
+        let registry = self.core.get_registry().ok()?;
+        let found = Arc::new(Mutex::new(None));
+        let found_clone = found.clone();
+        let name = name.to_string();
+        let _listener = registry
+            .add_listener_local()
+            .global(move |global| {
+                if global.type_ == ObjectType::Node
+                    && let Some(props) = &global.props
+                    && props.get("node.name").unwrap_or("") == name
+                {
+                    *found_clone.lock().unwrap() = Some(global.id);
+                }
+            })
+            .register();
+        let _ = self.roundtrip();
+        *found.lock().unwrap()
+    }
+
+    /// List app playback stream nodes (`media.class = Stream/Output/Audio`).
+    pub fn list_playback_streams(&self) -> Vec<(u32, String)> {
+        let registry = match self.core.get_registry() {
+            Ok(r) => r,
+            Err(_) => return Vec::new(),
+        };
+        let found = Arc::new(Mutex::new(Vec::new()));
+        let found_clone = found.clone();
+        let _listener = registry
+            .add_listener_local()
+            .global(move |global| {
+                if global.type_ == ObjectType::Node
+                    && let Some(props) = &global.props
+                    && props.get("media.class").unwrap_or("") == "Stream/Output/Audio"
+                {
+                    found_clone.lock().unwrap().push((
+                        global.id,
+                        props.get("node.name").unwrap_or("unknown").to_string(),
+                    ));
+                }
+            })
+            .register();
+        let _ = self.roundtrip();
+        let result = found.lock().unwrap().clone();
+        debug!("Found {} playback stream(s)", result.len());
+        result
     }
 
     pub fn create_link(&self, source_id: u32, target_name: &str) -> Result<u32, Error> {
@@ -202,47 +305,15 @@ impl RoutingEngine {
             source_id, target_name
         );
 
-        let registry = self.core.get_registry()?;
-
-        let link_id = Arc::new(Mutex::new(0u32));
-        let link_id_clone = link_id.clone();
-        let target_name = Arc::new(Mutex::new(target_name.to_string()));
-        let target_name_clone = target_name.clone();
-
-        let listener = registry.add_listener_local();
-        let listener = listener.global(move |global| {
-            if global.type_ == ObjectType::Node
-                && let Some(props) = &global.props
-            {
-                let name = props.get("node.name").unwrap_or("unknown");
-                let target = target_name_clone.lock().unwrap();
-                if name == *target {
-                    *link_id_clone.lock().unwrap() = global.id;
-                }
+        let target_id = match self.find_node_id_by_name(target_name) {
+            Some(id) => id,
+            None => {
+                warn!("Could not find target node {} for link", target_name);
+                return Err(Error::CreationFailed);
             }
-        });
-        let _listener = listener.register();
+        };
 
-        // Pump the loop so the `global` events populate `link_id`.
-        self.roundtrip()?;
-
-        let lid = *link_id.lock().unwrap();
-        let target = target_name.lock().unwrap();
-        if lid == 0 {
-            warn!("Could not find target node {} for link", *target);
-            return Err(Error::CreationFailed);
-        }
-
-        let mut links = self.links.lock().unwrap();
-        links.push(RouteInfo {
-            route_id: source_id,
-            source_node: source_id,
-            target_node: lid,
-            link_id: lid,
-        });
-
-        info!("Created link with id {}", lid);
-        Ok(lid)
+        self.link_nodes(source_id, target_id)
     }
 
     pub fn remove_link(&self, link_id: u32) -> Result<(), Error> {
