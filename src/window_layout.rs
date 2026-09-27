@@ -88,9 +88,13 @@ pub fn build_main_layout(
     split_view.set_sidebar(Some(&utility.container));
     split_view.set_pin_sidebar(true);
     split_view.set_collapsed(false);
-    split_view.set_sidebar_width_fraction(0.24);
-    split_view.set_min_sidebar_width(268.0);
-    split_view.set_max_sidebar_width(320.0);
+    // Keep the utility panel on the RIGHT at every window size. The old
+    // breakpoint logic flipped it Start(left)/End(right) depending on width,
+    // which made it jump sides when resizing.
+    split_view.set_sidebar_position(gtk4::PackType::End);
+    split_view.set_sidebar_width_fraction(0.28);
+    split_view.set_min_sidebar_width(320.0);
+    split_view.set_max_sidebar_width(440.0);
 
     (split_view, band_scrolled, faders)
 }

@@ -30,9 +30,12 @@ impl UtilityPane {
         presets.borrow_mut().start_file_monitoring();
 
         let container = gtk4::ScrolledWindow::new();
-        container.set_policy(gtk4::PolicyType::Automatic, gtk4::PolicyType::Automatic);
+        // Vertical-only scrolling: the panel content is laid out to fit the
+        // sidebar width, so a horizontal scrollbar is never wanted (it was
+        // appearing because the content min-width exceeded the sidebar max).
+        container.set_policy(gtk4::PolicyType::Never, gtk4::PolicyType::Automatic);
         container.set_vexpand(true);
-        container.set_size_request(310, -1);
+        container.set_hexpand(true);
 
         let main_box = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
         main_box.set_margin_top(8);

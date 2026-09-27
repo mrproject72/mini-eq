@@ -105,8 +105,10 @@ impl MiniEqWindow {
 
         // Inspector pane toggle
         let inspector_button = gtk4::ToggleButton::new();
-        inspector_button.set_icon_name("dialog-information-symbolic");
-        inspector_button.set_tooltip_text(Some("Inspector Pane"));
+        inspector_button.set_icon_name("sidebar-show-symbolic");
+        inspector_button.set_tooltip_text(Some("Toggle side panel (F9)"));
+        // Reflect the panel's initial expanded state.
+        inspector_button.set_active(true);
         header_bar.pack_end(&inspector_button);
 
         // Build main layout with utility pane.
@@ -286,24 +288,16 @@ impl MiniEqWindow {
             adw::LengthUnit::Sp,
         ));
 
-        let split_view_for_bp = split_view.clone();
         let band_scrolled_for_narrow = band_scrolled.clone();
         narrow_bp.connect_apply(move |_| {
-            // NOTE: do NOT set_collapsed(true) here. Upstream has no breakpoints
-            // and never force-collapses the utility pane; doing so made the right
-            // panel vanish whenever the layout re-evaluated (e.g. on a click that
-            // changed the band editor). Keep the layout compaction only.
-            split_view_for_bp
-                .borrow_mut()
-                .set_sidebar_position(gtk4::PackType::End);
+            // NOTE: do NOT set_collapsed(true) or swap sidebar position here.
+            // The utility panel stays pinned to the End (right) at all sizes;
+            // swapping it made the panel jump sides on resize. Keep only the
+            // height compaction.
             band_scrolled_for_narrow.set_min_content_height(150);
         });
-        let split_view_for_bp = split_view.clone();
         let band_scrolled_for_narrow = band_scrolled.clone();
         narrow_bp.connect_unapply(move |_| {
-            split_view_for_bp
-                .borrow_mut()
-                .set_sidebar_position(gtk4::PackType::Start);
             band_scrolled_for_narrow.set_min_content_height(200);
         });
 
