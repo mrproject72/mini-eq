@@ -86,13 +86,15 @@ pub fn build_main_layout(
     let split_view = adw::OverlaySplitView::new();
     split_view.set_content(Some(&main_box));
     split_view.set_sidebar(Some(&utility.container));
-    // Overlay mode: the main content keeps the FULL width and the utility
-    // panel slides OVER it from the right, instead of squeezing the content
-    // inline. Gives the main window maximum space.
-    split_view.set_pin_sidebar(false);
-    // Hidden by default; revealed via the toggle (F9 / header button) or the
-    // right-edge handle.
+    // Overlay mode: collapsed=TRUE means the sidebar is shown as an OVERLAY
+    // above the content, so the main content is ALWAYS full width. The panel
+    // never squeezes the content. Visibility is driven by `show-sidebar`.
     split_view.set_collapsed(true);
+    // We control visibility explicitly (via the toggle / F9); don't let the
+    // split view change it on its own.
+    split_view.set_pin_sidebar(true);
+    // Hidden by default: main content uses the full window width.
+    split_view.set_show_sidebar(false);
     // Keep the utility panel on the RIGHT at every window size.
     split_view.set_sidebar_position(gtk4::PackType::End);
     split_view.set_sidebar_width_fraction(0.32);

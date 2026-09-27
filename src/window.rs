@@ -269,14 +269,16 @@ impl MiniEqWindow {
 
         window.set_content(Some(&toolbar_view));
 
-        // Inspector pane toggle mirrors the F9 binding: it reflects and drives
-        // the split view's collapsed state.
+        // Inspector pane toggle mirrors the F9 binding. The split view is kept
+        // in overlay mode (collapsed=TRUE) so the main content is ALWAYS full
+        // width; the toggle drives `show-sidebar`, which slides the panel
+        // OVER the content instead of resizing it.
         {
             let split_view_for_toggle = split_view.clone();
             inspector_button.connect_toggled(move |button| {
                 split_view_for_toggle
                     .borrow_mut()
-                    .set_collapsed(!button.is_active());
+                    .set_show_sidebar(button.is_active());
             });
         }
 
@@ -343,14 +345,13 @@ impl MiniEqWindow {
         // Center window
         window_utils::center_window();
 
-        // F9 binding to toggle sidebar
-        let split_view_clone = split_view.clone();
+        // F9 binding to toggle the side panel. Drives the inspector button's
+        // active state, which in turn sets `show-sidebar` (overlay reveal).
+        let inspector_for_f9 = inspector_button.clone();
         let key_controller = gtk4::EventControllerKey::new();
         key_controller.connect_key_pressed(move |_, key, _, _| {
             if key == gtk4::gdk::Key::F9 {
-                split_view_clone
-                    .borrow_mut()
-                    .set_collapsed(!split_view_clone.borrow().is_collapsed());
+                inspector_for_f9.set_active(!inspector_for_f9.is_active());
                 return glib::Propagation::Stop;
             }
             glib::Propagation::Proceed
