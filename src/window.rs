@@ -580,13 +580,30 @@ impl MiniEqWindow {
                     apply_refresh();
                 })),
                 Some(Box::new(move || {
-                    let defaults =
-                        crate::core::compute_log_spaced_band_defaults(reset_band_faders.len());
+                    // Upstream `reset_state` restores `default_bands()` (the
+                    // first DEFAULT_ACTIVE_BANDS as neutral *Bell*s), NOT all
+                    // Off. Setting Off left the bands inert so moving a fader
+                    // produced no curve change ("EQ stays off").
+                    let default_bands = crate::core::default_bands();
                     // Upstream `reset_state` also zeroes the preamp.
                     reset_headroom.borrow().set_preamp_value(0.0);
                     for (i, fader) in reset_band_faders.iter().enumerate() {
                         let mut f = fader.borrow_mut();
-                        let (frequency, q) = defaults.get(i).copied().unwrap_or((1000.0, 1.0));
+                        let band = default_bands.get(i).cloned().unwrap_or_else(|| {
+                            crate::core::EqBand {
+                                index: i,
+                                frequency: 1000.0,
+                                gain_db: 0.0,
+                                q: 1.0,
+                                filter_type: crate::core::FilterType::Off,
+                                mute: false,
+                                solo: false,
+                                coefficients: crate::core::BiquadCoefficients::identity(),
+                            }
+                        });
+                        let frequency = band.frequency;
+                        let q = band.q;
+                        let filter_type = band.filter_type;
                         let selected = f.selected;
                         f.set_band_state(
                             0.0,
@@ -594,11 +611,8 @@ impl MiniEqWindow {
                             crate::window_band_fader::format_frequency_label(frequency),
                             q,
                             crate::window_band_fader::format_q_label(q),
-                            crate::core::FilterType::Off,
-                            crate::band_fader::filter_type_short_label(
-                                crate::core::FilterType::Off,
-                            )
-                            .into(),
+                            filter_type,
+                            crate::band_fader::filter_type_short_label(filter_type).into(),
                             selected,
                             i < crate::core::DEFAULT_ACTIVE_BANDS,
                             false,
