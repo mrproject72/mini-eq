@@ -2,6 +2,12 @@
 
 use gtk4::prelude::*;
 
+/// Smallest the window may be shrunk to. Chosen to stay friendly to low-res
+/// displays (classic VGA) while still fitting the graph + faders and the
+/// inline utility panel without cutting content.
+pub const MIN_WINDOW_WIDTH: i32 = 640;
+pub const MIN_WINDOW_HEIGHT: i32 = 480;
+
 pub fn initial_window_default_size() -> (i32, i32) {
     let display = gtk4::gdk::Display::default();
     if let Some(display) = display {

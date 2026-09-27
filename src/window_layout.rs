@@ -93,7 +93,7 @@ pub fn build_main_layout(
     // which made it jump sides when resizing.
     split_view.set_sidebar_position(gtk4::PackType::End);
     split_view.set_sidebar_width_fraction(0.28);
-    split_view.set_min_sidebar_width(320.0);
+    split_view.set_min_sidebar_width(300.0);
     split_view.set_max_sidebar_width(440.0);
 
     (split_view, band_scrolled, faders)

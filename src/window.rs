@@ -61,6 +61,9 @@ impl MiniEqWindow {
         let window = adw::ApplicationWindow::new(app);
         let (default_width, default_height) = window_state::initial_window_default_size();
         window.set_default_size(default_width, default_height);
+        // Enforce a minimum so components never get cut, while staying small
+        // enough not to dominate a low-res screen.
+        window.set_size_request(window_state::MIN_WINDOW_WIDTH, window_state::MIN_WINDOW_HEIGHT);
         window.set_title(Some("Mini EQ"));
 
         // Load CSS styling
