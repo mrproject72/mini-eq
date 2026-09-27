@@ -31,6 +31,16 @@
 
 ## Known Issues
 
+- **Fader bottom slightly clipped at some window sizes (minor).** The fader's
+  bottom edge (Q value "1.50" + the box's bottom border) can still be a few
+  px short of fully visible at certain window heights. The band_scrolled's
+  `min_content_height` was raised to match the fader height per breakpoint
+  (164 compact / 208 wide, see `window.rs` breakpoints), which improved it
+  a lot, but a small residual clip remains at some sizes. The faders are
+  fully usable; only the last border row is tight. Root cause is the tight
+  vertical budget (graph + faders + editor + header vs MIN_WINDOW_HEIGHT).
+  Possible follow-ups: shave the graph height, reduce fader CONTENT_H, or
+  let the fader area scroll.
 - GTK4/Libadwaita dev packages not permanently installed (using `deps/` directory).
 - PipeWire filter-chain module availability not verified for Rust `pipewire` crate.
 - No CI/CD pipeline running yet.
