@@ -38,12 +38,20 @@ pub fn build_band_faders(
     // from the band count, so the row spans 20 Hz..20 kHz across `count` bands.
     let defaults = crate::core::compute_log_spaced_band_defaults(count);
     for (i, (frequency, q)) in defaults.into_iter().enumerate() {
+        // Active bands must default to Bell (matching `core::default_bands()`).
+        // With `Off` the wet/dry mix is 0, so dragging the fader changes gain
+        // on a bypassed biquad and produces no audible effect.
+        let filter_type = if i < DEFAULT_ACTIVE_BANDS {
+            crate::core::FilterType::Bell
+        } else {
+            crate::core::FilterType::Off
+        };
         let band = WindowBandFader::new(
             i,
             frequency,
             0.0,
             q,
-            crate::core::FilterType::Off,
+            filter_type,
             i < DEFAULT_ACTIVE_BANDS,
             selection_changed_callback.clone(),
         );
