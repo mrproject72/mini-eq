@@ -461,10 +461,9 @@ impl MiniEqWindow {
                             log::warn!("System EQ: auto-route failed: {}", e);
                         }
                     } else {
-                        log::info!(
-                            "System EQ off: unrouting all streams is not implemented yet; \
-                             move streams back manually (e.g. pavucontrol)"
-                        );
+                        if let Err(e) = be.unroute_all() {
+                            log::warn!("System EQ off: unroute failed: {}", e);
+                        }
                     }
                 }
                 glib::Propagation::Proceed

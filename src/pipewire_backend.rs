@@ -311,19 +311,22 @@ impl PipeWireBackend {
     }
 
     /// Name of the active physical output sink, falling back to the first
-    /// detected route. Used as the filter-chain playback target.
-    pub fn default_output_sink(&self) -> Option<String> {
-        self.routing.detect_routes().ok().and_then(|routes| {
-            routes
-                .iter()
-                .find(|r| r.active)
-                .or_else(|| routes.first())
-                .map(|r| r.name.clone())
-        })
+    /// The user's current default output sink node name, read from the
+    /// PipeWire `default` metadata (`default.audio.sink`). This is the
+    /// sink the filter-chain playback node targets so EQ'd audio reaches
+    /// the speakers the user actually hears on — portable across any
+    /// PipeWire machine (no hardcoded device assumptions).
+    pub fn default_output_sink(&mut self) -> Option<String> {
+        self.routing.default_audio_sink_name()
     }
 
     pub fn auto_route_to_sink(&mut self, sink_name: &str) -> Result<(), Error> {
         self.routing.auto_route_to_sink(sink_name)
+    }
+
+    /// Clear routing targets for all playback streams (System EQ off).
+    pub fn unroute_all(&mut self) -> Result<(), Error> {
+        self.routing.unroute_all()
     }
 
     /// Update the DSP graph for a new set of bands.

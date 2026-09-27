@@ -1,4 +1,5 @@
 use std::cell::Cell;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -11,6 +12,7 @@ use pipewire::{
     link::Link,
     loop_::Timeout,
     main_loop::MainLoopRc,
+    metadata::Metadata,
     properties::properties,
     proxy::ProxyT,
     stream::StreamBox,
@@ -18,6 +20,27 @@ use pipewire::{
 };
 
 use crate::core::{FILTER_OUTPUT_SUFFIX, OUTPUT_CLIENT_NAME, SAMPLE_RATE, VIRTUAL_SINK_BASE};
+
+/// Parse a PipeWire metadata value that is a JSON object carrying a `name`
+/// field (e.g. the `default.audio.sink` value
+/// `{"name":"alsa_output.pci-...","priority":...}`) into the bare node
+/// name. Falls back to the raw string if it is not JSON, and returns
+/// `None` for empty/non-object payloads. Mirrors upstream
+/// `parse_metadata_node_name`.
+pub fn parse_metadata_node_name(value: Option<&str>) -> Option<String> {
+    let value = value?;
+    if value.is_empty() {
+        return None;
+    }
+    match serde_json::from_str::<serde_json::Value>(value) {
+        Ok(serde_json::Value::Object(map)) => map
+            .get("name")
+            .and_then(|n| n.as_str())
+            .map(|s| s.to_string()),
+        Ok(_) => None,
+        Err(_) => Some(value.to_string()),
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct OutputRoute {
@@ -58,6 +81,24 @@ pub struct RoutingEngine {
     auto_route: bool,
     current_sink: Option<String>,
     virtual_sink_name: String,
+    /// Handle to the PipeWire `default` metadata object, bound from the
+    /// registry global whose `metadata.name == "default"`. Used to set each
+    /// stream's `target.node`/`target.object` so WirePlumber performs the
+    /// routing (the pavucontrol mechanism). Mirrors upstream
+    /// `Pwg.Metadata.new(core, "default")` + `set_stream_target`.
+    default_metadata: Option<Metadata>,
+    /// The user's current default audio sink node name, captured from the
+    /// `default` metadata key `default.audio.sink` (a JSON object whose
+    /// `name` field is the sink's `node.name`). This is the portable,
+    /// machine-agnostic way to learn the real default output on any
+    /// PipeWire system — mirrors upstream `DEFAULT_AUDIO_SINK_KEY`.
+    default_audio_sink: Rc<RefCell<Option<String>>>,
+    /// The user's *configured* default sink (`default.configured.audio.sink`),
+    /// used as a fallback when the runtime default is unset.
+    configured_audio_sink: Rc<RefCell<Option<String>>>,
+    /// Keeps the metadata `property` listeners alive (a dropped listener
+    /// unregisters itself, so these must outlive the bind callback).
+    metadata_listeners: Rc<RefCell<Vec<pipewire::metadata::MetadataListener>>>,
 }
 
 impl RoutingEngine {
@@ -74,6 +115,10 @@ impl RoutingEngine {
             auto_route: false,
             current_sink: None,
             virtual_sink_name: format!("{}.source", VIRTUAL_SINK_BASE),
+            default_metadata: None,
+            default_audio_sink: Rc::new(RefCell::new(None)),
+            configured_audio_sink: Rc::new(RefCell::new(None)),
+            metadata_listeners: Rc::new(RefCell::new(Vec::new())),
         }
     }
 
@@ -183,8 +228,8 @@ impl RoutingEngine {
     pub fn auto_route_to_sink(&mut self, sink_name: &str) -> Result<(), Error> {
         info!("Auto-routing all playback streams to sink: {}", sink_name);
 
-        let sink_id = match self.find_node_id_by_name(sink_name) {
-            Some(id) => id,
+        let (sink_id, sink_serial) = match self.find_node_target(sink_name) {
+            Some(t) => t,
             None => {
                 warn!(
                     "Virtual sink node {} not found; cannot auto-route",
@@ -200,11 +245,11 @@ impl RoutingEngine {
             if name.contains(VIRTUAL_SINK_BASE) || name.contains(OUTPUT_CLIENT_NAME) {
                 continue;
             }
-            match self.link_nodes(*node_id, sink_id) {
-                Ok(link_id) => {
+            match self.set_stream_target(*node_id, sink_id, &sink_serial) {
+                Ok(()) => {
                     info!(
-                        "Routed '{}' ({}) -> {} (link {})",
-                        name, node_id, sink_name, link_id
+                        "Routed '{}' ({}) -> {} (target.node={}, target.object={})",
+                        name, node_id, sink_name, sink_id, sink_serial
                     );
                     routed += 1;
                 }
@@ -222,7 +267,183 @@ impl RoutingEngine {
         Ok(())
     }
 
-    /// Create a PipeWire link between two existing nodes via `link-factory`.
+    /// Clear the `target.node`/`target.object` metadata for all playback
+    /// streams so WirePlumber returns them to the default sink (System EQ
+    /// off). Mirrors upstream's unroute path.
+    pub fn unroute_all(&mut self) -> Result<(), Error> {
+        info!("Unrouting all playback streams from the EQ");
+        let streams = self.list_playback_streams();
+        let mut cleared = 0usize;
+        for (node_id, name) in &streams {
+            if name.contains(VIRTUAL_SINK_BASE) || name.contains(OUTPUT_CLIENT_NAME) {
+                continue;
+            }
+            if let Err(e) = self.clear_stream_target(*node_id) {
+                warn!("Failed to unroute '{}' ({}): {}", name, node_id, e);
+            } else {
+                cleared += 1;
+            }
+        }
+        info!("Unroute complete: {} stream(s) cleared", cleared);
+        Ok(())
+    }
+
+    /// Set a stream's routing target via the `default` metadata so
+    /// WirePlumber moves it. Mirrors upstream `set_stream_target`:
+    /// `target.node` = sink bound_id, `target.object` = sink object.serial,
+    /// both typed `Spa:Id`.
+    pub fn set_stream_target(
+        &mut self,
+        stream_id: u32,
+        sink_bound_id: u32,
+        sink_serial: &str,
+    ) -> Result<(), Error> {
+        self.ensure_default_metadata()?;
+        let md = self.default_metadata.as_ref().unwrap();
+        md.set_property(
+            stream_id,
+            "target.node",
+            Some("Spa:Id"),
+            Some(&sink_bound_id.to_string()),
+        );
+        md.set_property(
+            stream_id,
+            "target.object",
+            Some("Spa:Id"),
+            Some(sink_serial),
+        );
+        self.roundtrip()
+    }
+
+    /// Clear a stream's routing target so WirePlumber returns it to the
+    /// default sink (System EQ off).
+    pub fn clear_stream_target(&mut self, stream_id: u32) -> Result<(), Error> {
+        self.ensure_default_metadata()?;
+        let md = self.default_metadata.as_ref().unwrap();
+        md.set_property(stream_id, "target.node", None, None);
+        md.set_property(stream_id, "target.object", None, None);
+        self.roundtrip()
+    }
+
+    /// Lazily bind (and cache) the PipeWire `default` metadata object from
+    /// the registry global whose `metadata.name == "default"`. While binding,
+    /// register a `property` listener so the server's replayed properties
+    /// populate `default_audio_sink` / `configured_audio_sink`.
+    fn ensure_default_metadata(&mut self) -> Result<(), Error> {
+        if self.default_metadata.is_some() {
+            return Ok(());
+        }
+        let registry = self.core.get_registry_rc()?;
+        let found = Rc::new(RefCell::new(None::<Metadata>));
+        let found_c = found.clone();
+        let reg_c = registry.clone();
+        let sink_c = self.default_audio_sink.clone();
+        let cfg_c = self.configured_audio_sink.clone();
+        let listeners_c = self.metadata_listeners.clone();
+        let _listener = registry
+            .add_listener_local()
+            .global(move |g| {
+                if g.type_ == ObjectType::Metadata
+                    && g.props
+                        .as_ref()
+                        .map(|p| p.get("metadata.name").unwrap_or("") == "default")
+                        .unwrap_or(false)
+                {
+                    if let Ok(md) = reg_c.bind::<Metadata, _>(g) {
+                        // Register the property listener BEFORE the roundtrip
+                        // completes so the server's initial property replay
+                        // is captured. Mirrors upstream
+                        // `remember_default_metadata_change`.
+                        let sink_l = sink_c.clone();
+                        let cfg_l = cfg_c.clone();
+                        let _pl = md
+                            .add_listener_local()
+                            .property(move |_subject, key, _type, value| {
+                                match key {
+                                    Some("default.audio.sink") => {
+                                        let parsed = parse_metadata_node_name(value);
+                                        info!(
+                                            "metadata property default.audio.sink = {:?} -> {:?}",
+                                            value, parsed
+                                        );
+                                        *sink_l.borrow_mut() = parsed;
+                                    }
+                                    Some("default.configured.audio.sink") => {
+                                        *cfg_l.borrow_mut() = parse_metadata_node_name(value);
+                                    }
+                                    _ => {
+                                        debug!("metadata property {:?} = {:?}", key, value);
+                                    }
+                                }
+                                0
+                            })
+                            .register();
+                        listeners_c.borrow_mut().push(_pl);
+                        *found_c.borrow_mut() = Some(md);
+                    }
+                }
+            })
+            .register();
+        self.roundtrip()?;
+        let md = found.borrow_mut().take().ok_or(Error::CreationFailed)?;
+        self.default_metadata = Some(md);
+        info!(
+            "Bound default PipeWire metadata (default.audio.sink={:?})",
+            self.default_audio_sink.borrow().as_deref()
+        );
+        Ok(())
+    }
+
+    /// The user's current default audio sink node name, read from the
+    /// `default` metadata. Falls back to the configured sink. This is the
+    /// sink the filter-chain playback node should target so EQ'd audio
+    /// reaches the speakers the user actually hears on — portable across
+    /// any PipeWire machine.
+    pub fn default_audio_sink_name(&mut self) -> Option<String> {
+        self.ensure_default_metadata().ok()?;
+        // The server replays metadata properties asynchronously; pump the
+        // loop a few extra times so the `default.audio.sink` event lands
+        // before we read it.
+        if self.default_audio_sink.borrow().is_none() {
+            for _ in 0..20 {
+                self.mainloop
+                    .loop_()
+                    .iterate(Timeout::Finite(Duration::from_millis(20)));
+                if self.default_audio_sink.borrow().is_some() {
+                    break;
+                }
+            }
+        }
+        self.default_audio_sink
+            .borrow()
+            .clone()
+            .or_else(|| self.configured_audio_sink.borrow().clone())
+    }
+
+    /// Find a node's bound id AND its `object.serial` by node.name.
+    /// The serial is required for the modern `target.object` metadata key
+    /// (WirePlumber policy matches on the object serial, not just the id).
+    pub fn find_node_target(&self, name: &str) -> Option<(u32, String)> {
+        let registry = self.core.get_registry().ok()?;
+        let found = Arc::new(Mutex::new(None::<(u32, String)>));
+        let found_clone = found.clone();
+        let name = name.to_string();
+        let _listener = registry
+            .add_listener_local()
+            .global(move |global| {
+                if global.type_ == ObjectType::Node
+                    && let Some(props) = &global.props
+                    && props.get("node.name").unwrap_or("") == name
+                {
+                    if let Some(serial) = props.get("object.serial") {
+                        *found_clone.lock().unwrap() = Some((global.id, serial.to_string()));
+                    }
+                }
+            })
+            .register();
+        let _ = self.roundtrip();
+        found.lock().unwrap().clone()
+    }
     ///
     /// `output_node` is the stream producer (e.g. an app playback stream) and
     /// `input_node` is the consumer (e.g. the EQ virtual sink).
