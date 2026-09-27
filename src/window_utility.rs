@@ -19,6 +19,12 @@ pub struct UtilityPane {
     pub headroom: Rc<RefCell<window_headroom::HeadroomPanel>>,
     pub graph: Rc<RefCell<window_graph::EqGraph>>,
     pub presets: Rc<RefCell<window_presets::PresetPanel>>,
+    /// The Monitor on/off switch (wired to backend start/stop_monitor).
+    pub monitor_switch: gtk4::Switch,
+    /// Loudness readout label in the monitor strip (updated from the meter).
+    pub monitor_loudness_value: gtk4::Label,
+    /// "On · -23 LUFS" summary label in the monitor strip.
+    pub monitor_summary: gtk4::Label,
 }
 
 impl UtilityPane {
@@ -46,7 +52,8 @@ impl UtilityPane {
         let preset_section = Self::build_preset_section(&presets);
         main_box.append(&preset_section);
 
-        let system_section = Self::build_system_section(&analyzer, &headroom);
+        let (system_section, monitor_switch, monitor_loudness_value, monitor_summary) =
+            Self::build_system_section(&analyzer, &headroom);
         main_box.append(&system_section);
 
         container.set_child(Some(&main_box));
@@ -59,6 +66,9 @@ impl UtilityPane {
             headroom,
             graph,
             presets,
+            monitor_switch,
+            monitor_loudness_value,
+            monitor_summary,
         }
     }
 
@@ -74,7 +84,7 @@ impl UtilityPane {
     fn build_system_section(
         analyzer: &Rc<RefCell<window_analyzer::AnalyzerPanel>>,
         headroom: &Rc<RefCell<window_headroom::HeadroomPanel>>,
-    ) -> gtk4::Box {
+    ) -> (gtk4::Box, gtk4::Switch, gtk4::Label, gtk4::Label) {
         let section = gtk4::Box::new(gtk4::Orientation::Vertical, 6);
         section.set_css_classes(&["utility-section"]);
 
@@ -114,13 +124,19 @@ impl UtilityPane {
         let headroom_panel = headroom.borrow();
         section.append(headroom_panel.widget());
 
-        let monitor_panel = Self::build_monitor_panel();
+        let (monitor_panel, monitor_switch, monitor_loudness_value, monitor_summary) =
+            Self::build_monitor_panel();
         section.append(&monitor_panel);
 
-        section
+        (
+            section,
+            monitor_switch,
+            monitor_loudness_value,
+            monitor_summary,
+        )
     }
 
-    fn build_monitor_panel() -> gtk4::Box {
+    fn build_monitor_panel() -> (gtk4::Box, gtk4::Switch, gtk4::Label, gtk4::Label) {
         let panel = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
         panel.set_css_classes(&["monitor-strip"]);
 
@@ -203,7 +219,7 @@ impl UtilityPane {
         summary_label.set_halign(gtk4::Align::Start);
         panel.append(&summary_label);
 
-        panel
+        (panel, monitor_switch, loudness_value, summary_label)
     }
 
     pub fn widget(&self) -> &gtk4::ScrolledWindow {

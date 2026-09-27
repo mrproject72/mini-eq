@@ -392,6 +392,8 @@ impl MiniEqWindow {
             let band_faders = band_faders.clone();
             let backend = backend.clone();
             let engine_sink = engine_sink.clone();
+            let monitor_loudness_value = utility.monitor_loudness_value.clone();
+            let monitor_summary = utility.monitor_summary.clone();
             // Debounce state: only reload the filter-chain when the effective
             // state actually changed and at most every 400 ms, so fader drags
             // do not thrash the module.
@@ -449,7 +451,33 @@ impl MiniEqWindow {
                         None => (1000.0, 1.0, crate::core::FilterType::Bell),
                     };
                     let mut g = graph.borrow_mut();
-                    g.update(preamp_db, sel_freq, sel_q, sel_type, &bands, &[]);
+                    // Feed live spectrum from the output monitor (empty when
+                    // the monitor is off, so the overlay draws nothing).
+                    let analyzer_levels: Vec<f64> = backend
+                        .borrow()
+                        .as_ref()
+                        .map(|be| be.monitor_levels())
+                        .unwrap_or_default();
+                    g.update(
+                        preamp_db,
+                        sel_freq,
+                        sel_q,
+                        sel_type,
+                        &bands,
+                        &analyzer_levels,
+                    );
+                }
+                // Live loudness readout in the monitor strip (short-term LUFS).
+                if let Some(be) = backend.borrow().as_ref() {
+                    if be.monitor_enabled() {
+                        if let Some(loud) = be.monitor_loudness() {
+                            let lufs = loud.shortterm_lufs;
+                            if lufs.is_finite() {
+                                monitor_loudness_value.set_text(&format!("{lufs:.1} LUFS"));
+                                monitor_summary.set_text(&format!("On \u{00b7} {lufs:.1} LUFS"));
+                            }
+                        }
+                    }
                 }
                 headroom.borrow_mut().update_curve_peak(&bands, preamp_db);
 
@@ -487,8 +515,11 @@ impl MiniEqWindow {
         {
             let backend = backend.clone();
             glib::timeout_add_local(std::time::Duration::from_millis(10), move || {
-                if let Some(be) = backend.borrow().as_ref() {
+                if let Some(be) = backend.borrow_mut().as_mut() {
                     be.pump();
+                    // Advance the pending monitor port-linking (non-blocking,
+                    // bounded work per tick).
+                    be.pump_monitor_link();
                 }
                 ControlFlow::Continue
             });
@@ -515,7 +546,51 @@ impl MiniEqWindow {
             });
         }
 
-        // "Set Safe" lowers the preamp so the estimated curve peak clears 0 dBFS
+        // Monitor switch: start/stop the output spectrum capture. Mirrors
+        // upstream `set_analyzer_enabled` -> `ensure_output_analyzer`, where
+        // the analyzer captures the controller's output sink (the sink the
+        // EQ outputs to, i.e. what you hear) via a monitor tap. Our capture
+        // is a separate stream, so (unlike upstream) enabling it does not
+        // require restarting the filter-chain engine.
+        {
+            let backend_for_monitor = backend.clone();
+            let monitor_target = engine_sink.clone();
+            let summary = utility.monitor_summary.clone();
+            utility
+                .monitor_switch
+                .connect_state_set(move |_switch, on| {
+                    if let Some(be) = backend_for_monitor.borrow_mut().as_mut() {
+                        if on {
+                            let target = if monitor_target.is_empty() {
+                                be.default_output_sink().unwrap_or_default()
+                            } else {
+                                monitor_target.clone()
+                            };
+                            if target.is_empty() {
+                                log::warn!("Monitor: no output sink to capture");
+                                summary.set_text("Off · no sink");
+                                return glib::Propagation::Stop;
+                            }
+                            match be.start_monitor(&target) {
+                                Ok(()) => {
+                                    log::info!("Monitor enabled on {target}");
+                                    summary.set_text("On · Live");
+                                }
+                                Err(e) => {
+                                    log::warn!("Monitor start failed: {e}");
+                                    summary.set_text("Off");
+                                    return glib::Propagation::Stop;
+                                }
+                            }
+                        } else {
+                            be.stop_monitor();
+                            summary.set_text("Off");
+                        }
+                    }
+                    glib::Propagation::Proceed
+                });
+        }
+
         // with 1 dB of margin, mirroring upstream `on_set_safe_preamp_clicked`.
         {
             let headroom = utility.headroom.clone();

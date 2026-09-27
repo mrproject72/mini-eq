@@ -9,7 +9,646 @@
 //! focuses on the testable DSP pipeline.
 
 use crate::core::clamp;
+use crate::ebur128::{Ebur128Meter, ebur128_default_mode};
+use log::{debug, info, warn};
+use pipewire::{Error, core::CoreRc, properties::properties, stream::StreamBox};
 use rustfft::FftPlanner;
+use std::sync::{Arc, Mutex};
+
+// ---------------------------------------------------------------------------
+// Output Spectrum Analyzer — PipeWire capture plumbing
+// ---------------------------------------------------------------------------
+
+/// Target captured by the monitor stream: the processed output sink,
+/// matching upstream (which monitors `output_sink`, i.e. what you hear).
+pub const ANALYZER_CAPTURE_RATE: u32 = 48000;
+pub const ANALYZER_CAPTURE_CHANNELS: usize = 2;
+
+/// Levels shared from the realtime loop thread to the UI thread: log-band
+/// dB values plus the latest loudness snapshot.
+#[derive(Debug, Default)]
+pub struct MonitorShared {
+    pub levels_db: Mutex<Vec<f64>>,
+    pub loudness: Mutex<Option<AnalyzerLoudnessSnapshot>>,
+    pub frames_captured: Mutex<u64>,
+    pub peak_sample: Mutex<f32>,
+    pub mean_sample: Mutex<f32>,
+}
+
+/// DSP state owned by the capture callbacks (loop thread only, via Mutex).
+struct MonitorProcessor {
+    ring_mono: Vec<f32>,
+    prev_powers: Vec<f64>,
+    meter: Option<Ebur128Meter>,
+    last_lufs_emit: std::time::Instant,
+}
+
+/// Captures audio from the processed output and performs FFT spectrum
+/// analysis. Port of the Python `OutputSpectrumAnalyzer`: the stream
+/// mirrors upstream's `mini-eq-analyzer` capture (F32 stereo, monitor of
+/// the output sink), buffers feed the log-band FFT + LUFS meter, and the
+/// UI reads snapshots via [`OutputSpectrumAnalyzer::display_levels`].
+pub struct OutputSpectrumAnalyzer {
+    pub core: CoreRc,
+    pub capture_stream: Option<StreamBox<'static>>,
+    pub stream_listener: Option<pipewire::stream::StreamListener<()>>,
+    pub format_pod_bytes: Vec<u8>,
+    pub format_answer_bytes: Arc<Vec<u8>>,
+    /// Fixed PortConfig answer, same lifetime rules as above.
+    pub port_config_answer_bytes: Arc<Vec<u8>>,
+    pub shared: Arc<MonitorShared>,
+    processor: Arc<Mutex<MonitorProcessor>>,
+    pub sample_rate: f64,
+    pub fft_size: usize,
+    pub enabled: bool,
+    pub display_gain_db: f64,
+    pub response_speed: f64,
+    pub levels: Vec<f64>,
+    pub loudness_snapshot: Option<AnalyzerLoudnessSnapshot>,
+}
+
+/// Build an EnumFormat pod offering planar... interleaved F32 stereo,
+/// matching upstream's requested format.
+fn build_capture_enum_format(rate: u32) -> Vec<u8> {
+    use pipewire::spa::param::ParamType;
+    use pipewire::spa::param::audio::AudioFormat;
+    use pipewire::spa::param::format::{FormatProperties, MediaSubtype, MediaType};
+    use pipewire::spa::pod::{Object, Property, PropertyFlags, Value};
+    use pipewire::spa::utils::{Choice, ChoiceEnum, ChoiceFlags, Id, SpaTypes};
+
+    let obj = Value::Object(Object {
+        type_: SpaTypes::ObjectParamFormat.as_raw(),
+        id: ParamType::EnumFormat.as_raw(),
+        properties: vec![
+            Property {
+                key: FormatProperties::MediaType.0,
+                flags: PropertyFlags::empty(),
+                value: Value::Id(Id(MediaType::Audio.as_raw())),
+            },
+            Property {
+                key: FormatProperties::MediaSubtype.0,
+                flags: PropertyFlags::empty(),
+                value: Value::Id(Id(MediaSubtype::Raw.as_raw())),
+            },
+            Property {
+                key: FormatProperties::AudioFormat.0,
+                flags: PropertyFlags::empty(),
+                value: Value::Choice(ChoiceValue::Id(Choice(
+                    ChoiceFlags::empty(),
+                    ChoiceEnum::Enum {
+                        default: Id(AudioFormat::F32LE.as_raw()),
+                        alternatives: vec![Id(AudioFormat::F32LE.as_raw())],
+                    },
+                ))),
+            },
+            Property {
+                key: FormatProperties::AudioRate.0,
+                flags: PropertyFlags::empty(),
+                value: Value::Choice(ChoiceValue::Int(Choice(
+                    ChoiceFlags::empty(),
+                    ChoiceEnum::Range {
+                        default: rate as i32,
+                        min: 1,
+                        max: 192000,
+                    },
+                ))),
+            },
+            Property {
+                key: FormatProperties::AudioChannels.0,
+                flags: PropertyFlags::empty(),
+                value: Value::Int(ANALYZER_CAPTURE_CHANNELS as i32),
+            },
+            Property {
+                key: FormatProperties::AudioPosition.0,
+                flags: PropertyFlags::empty(),
+                value: Value::ValueArray(pipewire::spa::pod::ValueArray::Id(vec![
+                    Id(CHANNEL_POSITION_FL),
+                    Id(CHANNEL_POSITION_FR),
+                ])),
+            },
+        ],
+    });
+    serialize_pod_value(&obj)
+}
+
+/// Build a fixed Format pod answering the server's EnumFormat offer.
+fn build_capture_format(rate: u32) -> Vec<u8> {
+    use pipewire::spa::param::ParamType;
+    use pipewire::spa::param::audio::AudioFormat;
+    use pipewire::spa::param::format::{FormatProperties, MediaSubtype, MediaType};
+    use pipewire::spa::pod::{Object, Property, PropertyFlags, Value};
+    use pipewire::spa::utils::{Id, SpaTypes};
+
+    let obj = Value::Object(Object {
+        type_: SpaTypes::ObjectParamFormat.as_raw(),
+        id: ParamType::Format.as_raw(),
+        properties: vec![
+            Property {
+                key: FormatProperties::MediaType.0,
+                flags: PropertyFlags::empty(),
+                value: Value::Id(Id(MediaType::Audio.as_raw())),
+            },
+            Property {
+                key: FormatProperties::MediaSubtype.0,
+                flags: PropertyFlags::empty(),
+                value: Value::Id(Id(MediaSubtype::Raw.as_raw())),
+            },
+            Property {
+                key: FormatProperties::AudioFormat.0,
+                flags: PropertyFlags::empty(),
+                value: Value::Id(Id(AudioFormat::F32LE.as_raw())),
+            },
+            Property {
+                key: FormatProperties::AudioRate.0,
+                flags: PropertyFlags::empty(),
+                value: Value::Int(rate as i32),
+            },
+            Property {
+                key: FormatProperties::AudioChannels.0,
+                flags: PropertyFlags::empty(),
+                value: Value::Int(ANALYZER_CAPTURE_CHANNELS as i32),
+            },
+            Property {
+                key: FormatProperties::AudioPosition.0,
+                flags: PropertyFlags::empty(),
+                value: Value::ValueArray(pipewire::spa::pod::ValueArray::Id(vec![
+                    Id(CHANNEL_POSITION_FL),
+                    Id(CHANNEL_POSITION_FR),
+                ])),
+            },
+        ],
+    });
+    serialize_pod_value(&obj)
+}
+
+/// Build a fixed PortConfig pod answering the server's EnumPortConfig
+/// offer: capture direction, DSP mode, monitor tap — matching what
+/// `pw-record` negotiates on this daemon.
+fn build_capture_port_config() -> Vec<u8> {
+    use pipewire::spa::param::ParamType;
+    use pipewire::spa::pod::{Object, Property, PropertyFlags, Value};
+    use pipewire::spa::utils::{Id, SpaTypes};
+
+    // Property keys of SPA_TYPE_OBJECT_ParamPortConfig.
+    const PORT_CONFIG_DIRECTION: u32 = 1;
+    const PORT_CONFIG_MODE: u32 = 2;
+    const PORT_CONFIG_MONITOR: u32 = 3;
+    // SPA_DIRECTION_INPUT = 0, SPA_PARAM_PORT_CONFIG_MODE_dsp = 3.
+    const DIRECTION_INPUT: u32 = 0;
+    const PORT_CONFIG_MODE_DSP: u32 = 3;
+
+    let obj = Value::Object(Object {
+        type_: SpaTypes::ObjectParamPortConfig.as_raw(),
+        id: ParamType::PortConfig.as_raw(),
+        properties: vec![
+            Property {
+                key: PORT_CONFIG_DIRECTION,
+                flags: PropertyFlags::empty(),
+                value: Value::Id(Id(DIRECTION_INPUT)),
+            },
+            Property {
+                key: PORT_CONFIG_MODE,
+                flags: PropertyFlags::empty(),
+                value: Value::Id(Id(PORT_CONFIG_MODE_DSP)),
+            },
+            Property {
+                key: PORT_CONFIG_MONITOR,
+                flags: PropertyFlags::empty(),
+                value: Value::Bool(true),
+            },
+        ],
+    });
+    serialize_pod_value(&obj)
+}
+
+fn serialize_pod_value(value: &pipewire::spa::pod::Value) -> Vec<u8> {
+    pipewire::spa::pod::serialize::PodSerializer::serialize(std::io::Cursor::new(Vec::new()), value)
+        .map(|(cursor, _)| cursor.into_inner())
+        .unwrap_or_default()
+}
+
+use pipewire::spa::pod::ChoiceValue;
+
+/// SPA channel positions for stereo (SPA_AUDIO_CHANNEL_FL/FR).
+const CHANNEL_POSITION_FL: u32 = 3;
+const CHANNEL_POSITION_FR: u32 = 4;
+
+impl OutputSpectrumAnalyzer {
+    pub fn new(core: CoreRc, sample_rate: f64) -> Result<Self, Error> {
+        let fft_size = analyzer_fft_size(sample_rate);
+        let levels = vec![ANALYZER_DB_FLOOR; ANALYZER_BIN_COUNT];
+
+        Ok(Self {
+            core,
+            capture_stream: None,
+            stream_listener: None,
+            format_pod_bytes: build_capture_enum_format(ANALYZER_CAPTURE_RATE),
+            format_answer_bytes: Arc::new(build_capture_format(ANALYZER_CAPTURE_RATE)),
+            port_config_answer_bytes: Arc::new(build_capture_port_config()),
+            shared: Arc::new(MonitorShared::default()),
+            processor: Arc::new(Mutex::new(MonitorProcessor {
+                ring_mono: Vec::new(),
+                prev_powers: vec![0.0; ANALYZER_BIN_COUNT],
+                meter: None,
+                last_lufs_emit: std::time::Instant::now(),
+            })),
+            sample_rate,
+            fft_size,
+            enabled: false,
+            display_gain_db: ANALYZER_DISPLAY_GAIN_DEFAULT,
+            response_speed: ANALYZER_RESPONSE_DEFAULT,
+            levels,
+            loudness_snapshot: None,
+        })
+    }
+
+    /// Start capturing the processed output sink, mirroring upstream's
+    /// `mini-eq-analyzer` stream. Must be called on the loop's thread
+    /// before the loop moves to a background thread. `target_node_id`
+    /// pins capture to the sink's monitor ports (like upstream's
+    /// `new_audio_capture(sink, monitor=true)`); without it the session
+    /// manager may link an unrelated source (e.g. a microphone).
+    pub fn start_capture(
+        &mut self,
+        target_sink_name: &str,
+        target_node_id: Option<u32>,
+    ) -> Result<(), Error> {
+        use pipewire::spa::param::ParamType;
+        use pipewire::stream::StreamFlags;
+
+        info!("Starting spectrum capture of {target_sink_name}");
+
+        self.stop_capture();
+
+        let rate_string = ANALYZER_CAPTURE_RATE.to_string();
+        let capture_props = properties! {
+            *pipewire::keys::MEDIA_TYPE => "Audio",
+            *pipewire::keys::MEDIA_CATEGORY => "Capture",
+            *pipewire::keys::MEDIA_ROLE => "Music",
+            *pipewire::keys::NODE_NAME => ANALYZER_NODE_NAME,
+            *pipewire::keys::NODE_DESCRIPTION => ANALYZER_NODE_DESCRIPTION,
+            *pipewire::keys::APP_NAME => "Mini EQ",
+            "application.id" => ANALYZER_APPLICATION_ID,
+            "media.name" => ANALYZER_NODE_DESCRIPTION,
+            *pipewire::keys::MEDIA_CLASS => "Stream/Input/Audio",
+            "node.dont-move" => "true",
+            "state.restore-props" => "false",
+            "state.restore-target" => "false",
+            "target.object" => target_sink_name,
+            "audio.channels" => "2",
+            "audio.rate" => rate_string.as_str(),
+            "audio.format" => "f32le",
+        };
+
+        let stream = StreamBox::new(&self.core, ANALYZER_NODE_NAME, capture_props)?;
+        // SAFETY: the stream lives in `self.capture_stream` until
+        // `stop_capture`/drop, outliving the listener that borrows it.
+        let stream: StreamBox<'static> =
+            unsafe { std::mem::transmute::<StreamBox<'_>, StreamBox<'static>>(stream) };
+
+        let shared = self.shared.clone();
+        let processor = self.processor.clone();
+        let sample_rate = self.sample_rate;
+        let fft_size = self.fft_size;
+        let response_speed = self.response_speed;
+        let answer_bytes = self.format_answer_bytes.clone();
+        let port_config_bytes = self.port_config_answer_bytes.clone();
+
+        // Loudness meter lives with the DSP state on the loop thread.
+        match Ebur128Meter::new(ANALYZER_CAPTURE_RATE, 2, ebur128_default_mode()) {
+            Ok(meter) => {
+                processor.lock().unwrap().meter = Some(meter);
+            }
+            Err(e) => warn!("Analyzer loudness meter unavailable: {e:?}"),
+        }
+
+        let listener = stream
+            .add_local_listener::<()>()
+            .param_changed(move |stream, _, id, _param| {
+                if id == ParamType::EnumFormat.as_raw() {
+                    // Answer from struct-owned bytes (see
+                    // `format_answer_bytes`): `update_params` dispatches
+                    // asynchronously, so callback-local bytes would dangle.
+                    if let Some(pod) = pipewire::spa::pod::Pod::from_bytes(&answer_bytes) {
+                        if let Err(e) = stream.update_params(&mut [pod]) {
+                            warn!("Analyzer failed to set format: {e:?}");
+                        }
+                    }
+                } else if id == ParamType::EnumPortConfig.as_raw() {
+                    if let Some(pod) = pipewire::spa::pod::Pod::from_bytes(&port_config_bytes) {
+                        if let Err(e) = stream.update_params(&mut [pod]) {
+                            warn!("Analyzer failed to set port config: {e:?}");
+                        }
+                    }
+                }
+            })
+            .process(move |stream, _| {
+                process_capture_buffers(
+                    stream,
+                    &shared,
+                    &processor,
+                    sample_rate,
+                    fft_size,
+                    response_speed,
+                );
+            })
+            .state_changed(|stream, _, old, new| {
+                debug!("Analyzer stream state: {old:?} -> {new:?}");
+                if matches!(
+                    new,
+                    pipewire::stream::StreamState::Paused
+                        | pipewire::stream::StreamState::Streaming
+                ) && !matches!(
+                    old,
+                    pipewire::stream::StreamState::Paused
+                        | pipewire::stream::StreamState::Streaming
+                ) {
+                    // Negotiation done: activate so buffers start flowing,
+                    // mirroring upstream `stream.start()`.
+                    if let Err(e) = stream.set_active(true) {
+                        warn!("Analyzer failed to activate stream: {e:?}");
+                    }
+                }
+            })
+            .register()
+            .map_err(|_| Error::CreationFailed)?;
+
+        let enum_pod = pipewire::spa::pod::Pod::from_bytes(&self.format_pod_bytes)
+            .ok_or(Error::CreationFailed)?;
+        info!("Analyzer connecting to {target_sink_name} (node id {target_node_id:?})");
+        stream
+            .connect(
+                pipewire::spa::utils::Direction::Input,
+                target_node_id,
+                StreamFlags::MAP_BUFFERS,
+                &mut [enum_pod],
+            )
+            .map_err(|e| {
+                warn!("Analyzer stream connect failed: {e:?}");
+                Error::CreationFailed
+            })?;
+
+        self.capture_stream = Some(stream);
+        self.stream_listener = Some(listener);
+        self.enabled = true;
+
+        info!("Spectrum capture started");
+        Ok(())
+    }
+
+    pub fn stop_capture(&mut self) {
+        let was_enabled = self.enabled;
+        self.stream_listener = None;
+        if let Some(stream) = self.capture_stream.take() {
+            let _ = stream.disconnect();
+        }
+        self.enabled = false;
+        if was_enabled {
+            info!("Spectrum capture stopped");
+        }
+    }
+
+    /// Normalized 0..1 display levels for the UI (dB + display gain).
+    pub fn display_levels(&self) -> Vec<f64> {
+        let shared = self.shared.levels_db.lock().unwrap();
+        let db: Vec<f64> = if shared.len() == ANALYZER_BIN_COUNT {
+            shared.clone()
+        } else {
+            self.levels.clone()
+        };
+        spectrum_db_values_to_levels(
+            &db.iter()
+                .map(|v| v + self.display_gain_db)
+                .collect::<Vec<f64>>(),
+        )
+    }
+
+    /// Latest loudness snapshot, if any audio has been measured.
+    pub fn display_loudness(&self) -> Option<AnalyzerLoudnessSnapshot> {
+        self.shared.loudness.lock().unwrap().clone()
+    }
+
+    /// Our stream's daemon-side node id, once bound (0 until then).
+    pub fn stream_node_id(&self) -> u32 {
+        self.capture_stream
+            .as_ref()
+            .map(|s| s.node_id())
+            .unwrap_or(0)
+    }
+
+    /// Current stream state, if the stream exists.
+    pub fn stream_state(&self) -> Option<pipewire::stream::StreamState> {
+        self.capture_stream.as_ref().map(|s| s.state())
+    }
+
+    /// Capture diagnostics: (audio frames processed, bands with signal,
+    /// peak absolute sample seen).
+    pub fn monitor_stats(&self) -> (u64, usize, f32, f32) {
+        let frames = *self.shared.frames_captured.lock().unwrap();
+        let active = self
+            .shared
+            .levels_db
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|v| **v > ANALYZER_DB_FLOOR)
+            .count();
+        let peak = *self.shared.peak_sample.lock().unwrap();
+        let mean = *self.shared.mean_sample.lock().unwrap();
+        (frames, active, peak, mean)
+    }
+
+    pub fn analyze(&mut self, samples: &[f32]) {
+        if samples.is_empty() {
+            return;
+        }
+
+        let powers = samples_to_log_band_powers(samples, self.sample_rate, self.fft_size);
+        self.levels = power_values_to_db_values(&powers);
+    }
+
+    pub fn get_levels(&self) -> &[f64] {
+        &self.levels
+    }
+
+    pub fn set_display_gain(&mut self, gain_db: f64) {
+        self.display_gain_db = gain_db.clamp(ANALYZER_DISPLAY_GAIN_MIN, ANALYZER_DISPLAY_GAIN_MAX);
+    }
+
+    pub fn set_response_speed(&mut self, speed: f64) {
+        self.response_speed = speed.clamp(ANALYZER_RESPONSE_MIN, ANALYZER_RESPONSE_MAX);
+    }
+
+    pub fn get_display_norm(&self, band_index: usize) -> f64 {
+        if band_index >= self.levels.len() {
+            return 0.0;
+        }
+        analyzer_level_to_display_norm(self.levels[band_index], self.display_gain_db)
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+}
+
+/// Drain all queued capture buffers into the FFT + loudness pipeline.
+/// Runs on the PipeWire loop thread.
+fn process_capture_buffers(
+    stream: &pipewire::stream::Stream,
+    shared: &Arc<MonitorShared>,
+    processor: &Arc<Mutex<MonitorProcessor>>,
+    sample_rate: f64,
+    fft_size: usize,
+    response_speed: f64,
+) {
+    let mut proc = processor.lock().unwrap();
+    let mut new_frames = 0usize;
+
+    while let Some(mut buffer) = stream.dequeue_buffer() {
+        for data in buffer.datas_mut() {
+            // Only the chunk's byte range is valid audio; the rest
+            // of the mapping is stale (usually zeros). Copy bounds
+            // first to satisfy the borrow checker.
+            let (offset, size) = {
+                let chunk = data.chunk();
+                (chunk.offset() as usize, chunk.size() as usize)
+            };
+            if let Some(bytes) = data.data() {
+                let end = (offset + size).min(bytes.len());
+                if offset >= end {
+                    continue;
+                }
+                let valid = &bytes[offset..end];
+                // Debug hook: archive raw capture bytes for offline analysis.
+                if let Ok(path) = std::env::var("MINI_EQ_DUMP_PCM")
+                    && !path.is_empty()
+                {
+                    let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                    if size < 2_000_000 {
+                        use std::io::Write;
+                        if let Ok(mut file) = std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(&path)
+                        {
+                            let _ = file.write_all(valid);
+                        }
+                    }
+                }
+                let floats = bytes_to_f32_vec(valid);
+                if floats.is_empty() {
+                    continue;
+                }
+                let peak = floats.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+                {
+                    let mut guard = shared.peak_sample.lock().unwrap();
+                    if peak > *guard {
+                        *guard = peak;
+                    }
+                }
+                let mean = floats.iter().sum::<f32>() / floats.len().max(1) as f32;
+                {
+                    let mut guard = shared.mean_sample.lock().unwrap();
+                    // Loudest-mean wins so transients don't get diluted.
+                    if mean.abs() > guard.abs() {
+                        *guard = mean;
+                    }
+                }
+                // Feed stereo loudness meter with interleaved frames when
+                // we have a full channel pair per frame.
+                if let Some(meter) = proc.meter.as_mut() {
+                    let _ = meter.add_frames(&floats);
+                }
+                // Mono mix for the FFT ring.
+                let channels = 2usize;
+                let frames = floats.len() / channels;
+                for f in 0..frames {
+                    let mut sum = 0.0f32;
+                    for c in 0..channels {
+                        sum += floats.get(f * channels + c).copied().unwrap_or(0.0);
+                    }
+                    proc.ring_mono.push(sum / channels as f32);
+                }
+                new_frames += frames;
+            }
+        }
+    }
+
+    if proc.ring_mono.len() < fft_size || new_frames == 0 {
+        return;
+    }
+    // Keep overlap: retain the newest window plus a small tail.
+    let keep_from = proc.ring_mono.len().saturating_sub(fft_size);
+    let window: Vec<f32> = proc.ring_mono[keep_from..].to_vec();
+    proc.ring_mono.drain(..keep_from);
+
+    // Debug hook: archive signal-bearing FFT inputs for offline analysis.
+    if let Ok(path) = std::env::var("MINI_EQ_DUMP_WINDOW")
+        && !path.is_empty()
+    {
+        let peak_in: f32 = window.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        if peak_in > 0.01 {
+            use std::io::Write;
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+            {
+                for sample in &window {
+                    let _ = file.write_all(&sample.to_le_bytes());
+                }
+            }
+        }
+    }
+
+    let powers = samples_to_log_band_powers(&window, sample_rate, fft_size);
+    if powers.len() == proc.prev_powers.len() && !powers.is_empty() {
+        let alpha = analyzer_smoothing_alpha(response_speed, new_frames, sample_rate);
+        let smoothed = smooth_power_values(&proc.prev_powers, &powers, alpha);
+        proc.prev_powers = smoothed.clone();
+        let db = power_values_to_db_values(&smoothed);
+        if log::log_enabled!(log::Level::Debug) {
+            let peak = db.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let peak_idx = db
+                .iter()
+                .position(|&v| (v - peak).abs() < 1e-9)
+                .unwrap_or(999);
+            let win_peak: f32 = window.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+            log::debug!(
+                "FFT window={} frames={} ring={} win_peak={win_peak:.4} peak_db={peak:.1} peak_idx={peak_idx}",
+                window.len(),
+                new_frames,
+                proc.ring_mono.len()
+            );
+        }
+        *shared.levels_db.lock().unwrap() = db;
+    }
+    *shared.frames_captured.lock().unwrap() += new_frames as u64;
+
+    if proc.last_lufs_emit.elapsed().as_secs_f64() >= LOUDNESS_EMIT_INTERVAL_SECONDS
+        && let Some(meter) = proc.meter.as_ref()
+    {
+        let snapshot = AnalyzerLoudnessSnapshot {
+            momentary_lufs: meter.momentary_lufs().unwrap_or(f64::NEG_INFINITY),
+            shortterm_lufs: meter.shortterm_lufs().unwrap_or(f64::NEG_INFINITY),
+            integrated_lufs: meter.integrated_lufs().unwrap_or(f64::NEG_INFINITY),
+        };
+        *shared.loudness.lock().unwrap() = Some(snapshot);
+        proc.last_lufs_emit = std::time::Instant::now();
+    }
+}
+
+/// Copy a little-endian f32 byte payload (alignment-safe).
+fn bytes_to_f32_vec(bytes: &[u8]) -> Vec<f32> {
+    let usable = bytes.len() - (bytes.len() % ANALYZER_SAMPLE_WIDTH_BYTES);
+    let mut out = Vec::with_capacity(usable / ANALYZER_SAMPLE_WIDTH_BYTES);
+    let (chunks, _) = bytes[..usable].as_chunks::<ANALYZER_SAMPLE_WIDTH_BYTES>();
+    for chunk in chunks {
+        let word = [chunk[0], chunk[1], chunk[2], chunk[3]];
+        out.push(f32::from_le_bytes(word));
+    }
+    out
+}
 
 // ---------------------------------------------------------------------------
 // Constants (mirror the Python analyzer.py)

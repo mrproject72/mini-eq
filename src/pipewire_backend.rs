@@ -54,6 +54,14 @@ pub struct PipeWireBackend {
     /// Kept alive so the registry `global` listener stays registered for the
     /// backend's lifetime (listeners unregister themselves when dropped).
     _registry_listener: Option<pipewire::registry::Listener>,
+    /// Live output spectrum analyzer (monitor). Owns the capture stream that
+    /// taps the output sink's monitor ports. Mirrors upstream
+    /// `output_analyzer`. Started/stopped via `start_monitor`/`stop_monitor`.
+    analyzer: crate::analyzer::OutputSpectrumAnalyzer,
+    /// Target sink for a monitor start whose port-linking is still pending
+    /// negotiation. Driven forward by `pump_monitor_link` from the update
+    /// loop so the GTK UI never blocks on the (multi-second) link wait.
+    pending_monitor_target: Option<String>,
 }
 
 impl PipeWireBackend {
@@ -69,6 +77,8 @@ impl PipeWireBackend {
         info!("Connected to PipeWire server");
 
         let routing = RoutingEngine::new(core.clone(), mainloop.clone());
+        let analyzer =
+            crate::analyzer::OutputSpectrumAnalyzer::new(core.clone(), crate::core::SAMPLE_RATE)?;
 
         let backend = PipeWireBackend {
             mainloop,
@@ -82,6 +92,8 @@ impl PipeWireBackend {
             filter_node: Rc::new(RefCell::new(None)),
             engine_band_types: Vec::new(),
             _registry_listener: None,
+            analyzer,
+            pending_monitor_target: None,
         };
 
         let registry_listener = backend.setup_registry_listener()?;
@@ -124,6 +136,140 @@ impl PipeWireBackend {
         });
         let _listener = listener.register();
         Ok(_listener)
+    }
+
+    // ---------------------------------------------------------------------
+    // Output monitor (spectrum analyzer + loudness meter)
+    // ---------------------------------------------------------------------
+
+    /// Start monitoring the processed output for the spectrum analyzer and
+    /// loudness meter, mirroring upstream `ensure_output_analyzer`.
+    ///
+    /// Non-blocking: starts the capture stream and records the target so the
+    /// port-linking (which must wait for stream negotiation) is driven forward
+    /// by [`pump_monitor_link`] from the window's update loop. This keeps the
+    /// GTK UI responsive instead of freezing on the multi-second link wait.
+    pub fn start_monitor(&mut self, target_sink_name: &str) -> Result<(), Error> {
+        info!("Starting output monitor of {target_sink_name}");
+        self.analyzer.start_capture(target_sink_name, None)?;
+        self.pending_monitor_target = Some(target_sink_name.to_string());
+        Ok(())
+    }
+
+    /// Advance the pending monitor port-linking. Called every tick from the
+    /// update loop. Once the capture stream has negotiated (Paused/Streaming)
+    /// and the sink + our node are both visible in the registry, link the
+    /// sink's monitor ports to our analyzer inputs with `pw-link` (the
+    /// session manager otherwise routes capture to the default source, e.g.
+    /// a microphone), then drop any foreign links it made meanwhile.
+    ///
+    /// Does a bounded amount of work per call so it never blocks the UI for
+    /// long. Returns `true` when linking is finished (success or giving up).
+    pub fn pump_monitor_link(&mut self) -> bool {
+        let Some(target) = self.pending_monitor_target.clone() else {
+            return true;
+        };
+        // Wait until the capture stream has finished negotiating.
+        let negotiated = matches!(
+            self.analyzer.stream_state(),
+            Some(pipewire::stream::StreamState::Paused)
+                | Some(pipewire::stream::StreamState::Streaming)
+        );
+        if !negotiated {
+            return false;
+        }
+        let our_id = self.analyzer.stream_node_id();
+        if our_id == 0 {
+            return false;
+        }
+        let nodes = registry_node_names(&self.mainloop, &self.core).unwrap_or_default();
+        let Some(hw_id) = nodes
+            .iter()
+            .find(|(name, _)| name == &target)
+            .map(|(_, id)| *id)
+        else {
+            return false;
+        };
+        let snapshot = registry_port_snapshot(&self.mainloop, &self.core).unwrap_or_default();
+        // Port ids collide per direction (playback_FL and monitor_FL are both
+        // port.id 0), so link by port NAME.
+        let hw_mon: Vec<String> = snapshot
+            .iter()
+            .filter(|p| p.node_id == hw_id && p.direction == "out" && p.path.contains("monitor"))
+            .map(|p| p.port_name.clone())
+            .collect();
+        let our_in: Vec<String> = snapshot
+            .iter()
+            .filter(|p| {
+                p.node_id == our_id && p.direction == "in" && p.port_name.starts_with("input")
+            })
+            .map(|p| p.port_name.clone())
+            .collect();
+        if hw_mon.len() < 2 || our_in.len() < 2 {
+            return false;
+        }
+        for (out_port, in_port) in hw_mon.iter().zip(our_in.iter()).take(2) {
+            let out_ref = format!("{target}:{out_port}");
+            let in_ref = format!("{}:{in_port}", crate::analyzer::ANALYZER_NODE_NAME);
+            let owned = [out_ref.clone(), in_ref.clone()];
+            let refs: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
+            match run_pw_link(&self.mainloop, &refs, std::time::Duration::from_secs(10)) {
+                Some(o) if o.status.success() => info!("Linked monitor {out_ref} -> {in_ref}"),
+                Some(o) => warn!(
+                    "pw-link failed: {} {}",
+                    o.status,
+                    String::from_utf8_lossy(&o.stderr).trim()
+                ),
+                None => warn!("pw-link timed out"),
+            }
+        }
+        self.drop_foreign_monitor_links(our_id, hw_id);
+        self.pending_monitor_target = None;
+        true
+    }
+
+    /// Destroy links into our analyzer inputs that don't come from the
+    /// monitored sink (e.g. session-manager microphone links).
+    fn drop_foreign_monitor_links(&self, our_id: u32, hw_id: u32) {
+        let links = registry_link_snapshot(&self.mainloop, &self.core).unwrap_or_default();
+        for link in links {
+            if link.input_node == our_id && link.output_node != hw_id {
+                let id = link.id.to_string();
+                let args = ["destroy", id.as_str()];
+                if let Some(o) =
+                    run_pw_cli_pumped(&self.mainloop, &args, std::time::Duration::from_secs(10))
+                    && o.status.success()
+                {
+                    info!("Dropped foreign monitor link {}", link.id);
+                }
+            }
+        }
+    }
+
+    /// Stop the output monitor.
+    pub fn stop_monitor(&mut self) {
+        self.pending_monitor_target = None;
+        self.analyzer.stop_capture();
+    }
+
+    /// Normalized 0..1 spectrum levels from live captured audio.
+    pub fn monitor_levels(&self) -> Vec<f64> {
+        self.analyzer.display_levels()
+    }
+
+    /// Latest loudness snapshot from live captured audio, if any.
+    pub fn monitor_loudness(&self) -> Option<crate::analyzer::AnalyzerLoudnessSnapshot> {
+        self.analyzer.display_loudness()
+    }
+
+    /// Monitor diagnostics: (frames, active bands, peak, mean).
+    pub fn monitor_stats(&self) -> (u64, usize, f32, f32) {
+        self.analyzer.monitor_stats()
+    }
+
+    /// Whether the monitor capture is currently enabled.
+    pub fn monitor_enabled(&self) -> bool {
+        self.analyzer.is_enabled()
     }
 
     /// Push the current band/preamp state to the live filter node via
@@ -390,4 +536,229 @@ impl Default for PipeWireBackend {
         let bands = crate::core::default_bands();
         Self::new(bands).expect("Failed to create PipeWire backend")
     }
+}
+
+// ---------------------------------------------------------------------------
+// Monitor port-linking helpers (ported from the session branch).
+//
+// The session manager routes capture streams to the default *source* (e.g. a
+// microphone) regardless of `target.object`, so to monitor an output sink we
+// must link its monitor ports to our analyzer inputs explicitly with
+// `pw-link`, and destroy any foreign links the manager made meanwhile. These
+// helpers scrape the registry for the needed ids/names and run the CLI tools
+// while pumping our loop so daemon round-trips can complete.
+// ---------------------------------------------------------------------------
+
+/// Run `pw-link` while pumping our loop, so daemon round-trips that need our
+/// own objects to answer can complete. Loop-thread only.
+fn run_pw_link(
+    mainloop: &MainLoopRc,
+    args: &[&str],
+    timeout: std::time::Duration,
+) -> Option<std::process::Output> {
+    use pipewire::loop_::Timeout;
+
+    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let refs: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
+        let output = std::process::Command::new("pw-link")
+            .args(&refs)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .ok();
+        let _ = sender.send(output);
+    });
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match receiver.try_recv() {
+            Ok(result) => return result,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => return None,
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+        }
+        if std::time::Instant::now() >= deadline {
+            warn!("pw-link timed out after {timeout:?}");
+            return None;
+        }
+        mainloop
+            .loop_()
+            .iterate(Timeout::Finite(std::time::Duration::from_millis(20)));
+    }
+}
+
+/// Run `pw-cli` with a timeout, returning `None` on spawn failure or timeout.
+fn run_pw_cli(args: &[&str], timeout: std::time::Duration) -> Option<std::process::Output> {
+    let child = std::process::Command::new("pw-cli")
+        .args(args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .ok()?;
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let result = child.wait_with_output();
+        let _ = sender.send(result);
+    });
+    match receiver.recv_timeout(timeout) {
+        Ok(Ok(output)) => Some(output),
+        Ok(Err(e)) => {
+            warn!("pw-cli failed: {e}");
+            None
+        }
+        Err(_) => {
+            warn!("pw-cli timed out after {timeout:?}, leaving child to exit");
+            None
+        }
+    }
+}
+
+/// Run `pw-cli` while pumping our loop, for calls whose daemon round-trip
+/// needs our own objects to answer (destroy involving our stream). Loop only.
+fn run_pw_cli_pumped(
+    mainloop: &MainLoopRc,
+    args: &[&str],
+    timeout: std::time::Duration,
+) -> Option<std::process::Output> {
+    use pipewire::loop_::Timeout;
+
+    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let refs: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
+        let result = run_pw_cli(&refs, timeout);
+        let _ = sender.send(result);
+    });
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match receiver.try_recv() {
+            Ok(result) => return result,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => return None,
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+        }
+        if std::time::Instant::now() >= deadline {
+            return None;
+        }
+        mainloop
+            .loop_()
+            .iterate(Timeout::Finite(std::time::Duration::from_millis(20)));
+    }
+}
+
+/// (node.name, id) records scraped from a registry snapshot. Loop-thread only:
+/// pumps a few iterations so globals arrive before reading.
+fn registry_node_names(mainloop: &MainLoopRc, core: &CoreRc) -> Result<Vec<(String, u32)>, Error> {
+    use pipewire::loop_::Timeout;
+    use std::sync::{Arc, Mutex};
+
+    let names: Arc<Mutex<Vec<(String, u32)>>> = Arc::new(Mutex::new(Vec::new()));
+    let names_clone = names.clone();
+    let registry = core.get_registry()?;
+    let _listener = registry
+        .add_listener_local()
+        .global(move |global| {
+            if global.type_ == pipewire::types::ObjectType::Node {
+                if let Some(props) = &global.props {
+                    let name = props.get("node.name").unwrap_or("").to_string();
+                    if !name.is_empty() {
+                        names_clone.lock().unwrap().push((name, global.id));
+                    }
+                }
+            }
+        })
+        .register();
+    for _ in 0..5 {
+        mainloop
+            .loop_()
+            .iterate(Timeout::Finite(std::time::Duration::from_millis(20)));
+    }
+    Ok(names.lock().unwrap().drain(..).collect())
+}
+
+/// Port record scraped from a registry snapshot.
+struct PortRecord {
+    node_id: u32,
+    port_name: String,
+    direction: String,
+    path: String,
+}
+
+/// Snapshot ports from our registry. Loop-thread only.
+fn registry_port_snapshot(mainloop: &MainLoopRc, core: &CoreRc) -> Result<Vec<PortRecord>, Error> {
+    use pipewire::loop_::Timeout;
+    use std::sync::{Arc, Mutex};
+
+    let ports: Arc<Mutex<Vec<PortRecord>>> = Arc::new(Mutex::new(Vec::new()));
+    let ports_clone = ports.clone();
+    let registry = core.get_registry()?;
+    let _listener = registry
+        .add_listener_local()
+        .global(move |global| {
+            if global.type_ == pipewire::types::ObjectType::Port {
+                if let Some(props) = &global.props {
+                    let get = |k: &str| props.get(k).unwrap_or("").to_string();
+                    if let (Some(node_id), Some(_port_id)) = (
+                        get("node.id").parse::<u32>().ok(),
+                        get("port.id").parse::<u32>().ok(),
+                    ) {
+                        ports_clone.lock().unwrap().push(PortRecord {
+                            node_id,
+                            port_name: get("port.name"),
+                            direction: get("port.direction"),
+                            path: get("object.path"),
+                        });
+                    }
+                }
+            }
+        })
+        .register();
+    for _ in 0..5 {
+        mainloop
+            .loop_()
+            .iterate(Timeout::Finite(std::time::Duration::from_millis(20)));
+    }
+    Ok(ports.lock().unwrap().drain(..).collect())
+}
+
+/// Link record scraped from a registry snapshot.
+struct LinkRecord {
+    id: u32,
+    output_node: u32,
+    input_node: u32,
+}
+
+/// Snapshot links from our registry. Loop-thread only.
+fn registry_link_snapshot(mainloop: &MainLoopRc, core: &CoreRc) -> Result<Vec<LinkRecord>, Error> {
+    use pipewire::loop_::Timeout;
+    use std::sync::{Arc, Mutex};
+
+    let links: Arc<Mutex<Vec<LinkRecord>>> = Arc::new(Mutex::new(Vec::new()));
+    let links_clone = links.clone();
+    let registry = core.get_registry()?;
+    let _listener = registry
+        .add_listener_local()
+        .global(move |global| {
+            if global.type_ == pipewire::types::ObjectType::Link {
+                if let Some(props) = &global.props {
+                    let get = |k: &str| props.get(k).unwrap_or("").to_string();
+                    if let (Some(output_node), Some(input_node)) = (
+                        get("link.output.node").parse::<u32>().ok(),
+                        get("link.input.node").parse::<u32>().ok(),
+                    ) {
+                        links_clone.lock().unwrap().push(LinkRecord {
+                            id: global.id,
+                            output_node,
+                            input_node,
+                        });
+                    }
+                }
+            }
+        })
+        .register();
+    for _ in 0..5 {
+        mainloop
+            .loop_()
+            .iterate(Timeout::Finite(std::time::Duration::from_millis(20)));
+    }
+    Ok(links.lock().unwrap().drain(..).collect())
 }
