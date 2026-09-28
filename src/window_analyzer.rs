@@ -16,8 +16,6 @@ pub struct AnalyzerPanel {
     pub smoothing_scale: gtk4::Scale,
     pub display_gain_scale: gtk4::Scale,
     pub freeze_switch: gtk4::Switch,
-    pub lufs_value_label: gtk4::Label,
-    pub summary_label: gtk4::Label,
     pub levels: Rc<RefCell<Vec<f64>>>,
 }
 
@@ -54,12 +52,13 @@ impl AnalyzerPanel {
         freeze_switch.set_tooltip_text(Some("Freeze"));
         freeze_switch.set_valign(gtk4::Align::Center);
 
-        let lufs_value_label = gtk4::Label::new(Some("-23 LUFS"));
-        lufs_value_label.set_css_classes(&["numeric"]);
-
-        let summary_label = gtk4::Label::new(Some("On · -23 LUFS"));
-        summary_label.set_css_classes(&["analyzer-summary-label"]);
-
+        // NOTE: this panel used to carry its own `lufs_value_label` and
+        // `summary_label`, but nothing ever wrote to them -- they sat at a
+        // hardcoded "-23 LUFS" forever while the real live readout lives in
+        // the monitor strip just below (window.rs updates
+        // utility.monitor_loudness_value / monitor_summary). Removed rather
+        // than duplicated: two LUFS labels where one is a lie is worse than
+        // one that is correct.
         let container = gtk4::Box::new(gtk4::Orientation::Vertical, 6);
         container.set_css_classes(&["utility-section"]);
         container.set_margin_bottom(8);
@@ -71,9 +70,6 @@ impl AnalyzerPanel {
         controls.append(&display_gain_scale);
         controls.append(&freeze_switch);
         container.append(&controls);
-
-        container.append(&lufs_value_label);
-        container.append(&summary_label);
 
         let levels = Rc::new(RefCell::new(vec![0.0; 64]));
         let draw_levels = levels.clone();
@@ -89,8 +85,6 @@ impl AnalyzerPanel {
             smoothing_scale,
             display_gain_scale,
             freeze_switch,
-            lufs_value_label,
-            summary_label,
             levels,
         }
     }

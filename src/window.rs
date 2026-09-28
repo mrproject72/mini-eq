@@ -1197,13 +1197,17 @@ impl MiniEqWindow {
 fn create_menu_model() -> gio::Menu {
     let menu = gio::Menu::new();
 
+    // NOTE the `win.` prefix: these actions are registered on the
+    // ApplicationWindow, not the GApplication. `app.` resolves against the
+    // GApplication's action group, so with `app.` GTK found no action and
+    // rendered every item insensitive (disabled).
     let file_section = gio::Menu::new();
-    file_section.append(Some("Preferences"), Some("app.preferences"));
-    file_section.append(Some("Quit"), Some("app.quit"));
+    file_section.append(Some("Preferences"), Some("win.preferences"));
+    file_section.append(Some("Quit"), Some("win.quit"));
     menu.append_section(None, &file_section);
 
     let help_section = gio::Menu::new();
-    help_section.append(Some("About Mini EQ"), Some("app.about"));
+    help_section.append(Some("About mini-eq RR"), Some("win.about"));
     menu.append_section(None, &help_section);
 
     menu

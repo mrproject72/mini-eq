@@ -221,15 +221,62 @@ impl PresetPanel {
             let list_box_for_import = panel_clone.borrow().list_box.clone();
             dialog.connect_response(move |d, response| {
                 if response == gtk4::ResponseType::Accept {
-                    if let Some(file) = d.file() {
-                        if let Some(path) = file.path() {
-                            if let Ok((_preamp, bands)) = parse_apo_file(&path) {
-                                let count = count_custom_children(&list_box_for_import);
-                                let name = format!("imported_{}", count + 1);
-                                let sanitized = sanitize_preset_name(&name);
-                                let dest = preset_path_for_name(&sanitized);
-                                let _ = save_preset_to_file(&dest, &bands, _preamp);
-                                refresh_preset_list(&list_box_for_import);
+                    if let Some(path) = d.file().and_then(|f| f.path()) {
+                        let stem = path
+                            .file_stem()
+                            .map(|s| s.to_string_lossy().to_string())
+                            .unwrap_or_else(|| "imported".to_string());
+                        match parse_apo_file(&path) {
+                            Ok((preamp, bands)) => {
+                                // Name it after the source file rather than
+                                // "imported_N", and let the user change it.
+                                let list_box = list_box_for_import.clone();
+                                prompt_preset_name(
+                                    "Import APO Preset",
+                                    "Import",
+                                    &stem,
+                                    move |name| {
+                                        let sanitized = sanitize_preset_name(&name);
+                                        let dest = preset_path_for_name(&sanitized);
+                                        let _ = save_preset_to_file(&dest, &bands, preamp);
+                                        refresh_preset_list(&list_box);
+                                    },
+                                );
+                            }
+                            // Surfaced rather than swallowed: a silently
+                            // ignored bad file is indistinguishable from an
+                            // import that never ran.
+                            Err(err) => {
+                                // adw::Alert needs libadwaita 1.8 and we
+                                // are gated at v1_7, so use a plain
+                                // labelled dialog.
+                                let msg = gtk4::Label::new(Some(&format!(
+                                    "Could not import this APO preset:\n\n{err}"
+                                )));
+                                msg.set_wrap(true);
+                                msg.set_xalign(0.0);
+                                let close = gtk4::Button::with_label("OK");
+                                close.add_css_class("suggested-action");
+                                let wrap = gtk4::Box::new(gtk4::Orientation::Vertical, 14);
+                                wrap.set_margin_start(18);
+                                wrap.set_margin_end(18);
+                                wrap.set_margin_top(18);
+                                wrap.set_margin_bottom(18);
+                                wrap.append(&msg);
+                                let btn_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+                                btn_row.set_halign(gtk4::Align::End);
+                                btn_row.append(&close);
+                                wrap.append(&btn_row);
+                                let err_dialog = adw::Dialog::new();
+                                err_dialog.set_title("Import failed");
+                                err_dialog.set_content_width(420);
+                                err_dialog.set_child(Some(&wrap));
+                                err_dialog.set_default_widget(Some(&close));
+                                let ed = err_dialog.clone();
+                                close.connect_clicked(move |_| {
+                                    ed.close();
+                                });
+                                err_dialog.present(None::<&gtk4::Widget>);
                             }
                         }
                     }
