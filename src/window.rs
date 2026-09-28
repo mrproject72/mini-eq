@@ -1064,6 +1064,7 @@ impl MiniEqWindow {
                                 Ok(()) => {
                                     log::info!("Monitor enabled on {target}");
                                     summary.set_text("On · Live");
+                                    let _ = crate::settings::save_monitor_enabled(true);
                                 }
                                 Err(e) => {
                                     log::warn!("Monitor start failed: {e}");
@@ -1074,10 +1075,37 @@ impl MiniEqWindow {
                         } else {
                             be.stop_monitor();
                             summary.set_text("Off");
+                            let _ = crate::settings::save_monitor_enabled(false);
                         }
                     }
                     glib::Propagation::Proceed
                 });
+
+            // Restore the persisted monitor state. load_monitor_enabled()
+            // existed but was never called, so the monitor always came up
+            // off regardless of how the user left it.
+            let want_monitor = crate::settings::load_monitor_enabled();
+            {
+                let sw = utility.graph.borrow().monitor_switch.clone();
+                let summary = utility.monitor_summary.clone();
+                let backend_restore = backend.clone();
+                let monitor_target = engine_sink.clone();
+                sw.set_active(want_monitor);
+                if want_monitor {
+                    if let Some(be) = backend_restore.borrow_mut().as_mut() {
+                        let target = if monitor_target.is_empty() {
+                            be.default_output_sink().unwrap_or_default()
+                        } else {
+                            monitor_target.clone()
+                        };
+                        if !target.is_empty() && be.start_monitor(&target).is_ok() {
+                            log::info!("Monitor restored on {target}");
+                            summary.set_text("On · Live");
+                        }
+                    }
+                }
+                let _ = summary;
+            }
         }
 
         // Output Controls (Headroom panel): per-output-device auto-preset.

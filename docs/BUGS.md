@@ -48,11 +48,22 @@
   are **0** call sites for `AppearanceSettings::save` / `save_appearance`,
   and `appearance.rs::sync_appearance_css_class` has no callers. Upstream
   persists the `appearance` key.
-- **Window position is not restored.** `window_state.rs` has no
-  `set_default_size` / move logic for position; only size and the monitor
-  geometry fallback are handled.
+- **Window position cannot be restored — NOT FIXABLE in GTK4.**
+  `AppearanceSettings` carries `window_x`/`window_y`, but GTK4 removed
+  `gtk_window_move` and `gtk_window_get_position` entirely: there are
+  **zero** occurrences of "position" in GtkWindow's 1901-line generated
+  API. The compositor owns window placement, so there is no portable
+  getter to capture from and no setter to restore with. Window *size* is
+  persisted and restored (`window_width`/`window_height`); position is
+  vestigial. Close this as won't-fix rather than leaving it open forever.
+  The `window_x`/`window_y` fields could be dropped to avoid the impression
+  that support is imminent.
 
-- **Monitor settings popover sliders unwired; monitor-enabled state not persisted.** The smoothing / display-gain sliders and `settings.rs::load_monitor_enabled`/`save_monitor_enabled` exist but nothing calls them. (Also: freeze switch missing window-side.)
+- ~~Monitor-enabled state not persisted.~~ **FIXED** — `load_monitor_enabled()`
+  is now called at startup and `save_monitor_enabled()` on every successful
+  toggle. Verified: "Monitor restored on <sink>" on launch.
+  ~~Monitor settings popover sliders unwired~~ **FIXED** — smoothing,
+  display-gain and freeze are all wired to the backend now.** The smoothing / display-gain sliders and `settings.rs::load_monitor_enabled`/`save_monitor_enabled` exist but nothing calls them. (Also: freeze switch missing window-side.)
 - **No runtime re-target on default-sink change.** The monitor and filter-chain keep the sink they were started with; switching the system default output does not follow.
 - **No `node.dont-move` / foreign-target guards on the EQ sink.** WirePlumber or other tools can re-link around it.
 - Dead code: `analyzer.rs::{spectrum_db_values_to_levels, interleaved_f32le_bytes_to_channel_payloads, smooth_power_values}` and several `pipewire_backend.rs`/`routing.rs` accessors have no non-test callers.
