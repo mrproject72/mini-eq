@@ -641,6 +641,12 @@ impl MiniEqWindow {
             let last_push = Rc::new(RefCell::new(
                 std::time::Instant::now() - std::time::Duration::from_millis(500),
             ));
+            // The spectrum analyzer panel. The backend already captures the
+            // audio (analyzer.start_capture) and D-Bus already exposes the
+            // levels, but nothing ever pushed them into the panel, so it
+            // rendered blank -- the analyzer looked "missing" even though
+            // the whole pipeline existed except for this last hop.
+            let analyzer_panel = utility.analyzer.clone();
             glib::timeout_add_local(std::time::Duration::from_millis(33), move || {
                 // Smooth override: the graph, the peak estimate and the
                 // backend push must all see the SAME effective bands, or the
@@ -685,6 +691,18 @@ impl MiniEqWindow {
                     .borrow()
                     .as_ref()
                     .and_then(|be| be.monitor_peak_dbfs());
+
+                // Push the live spectrum into the analyzer panel. Cheap when
+                // the monitor is off: monitor_levels() returns empty and we
+                // skip the update rather than redrawing a blank frame.
+                let levels = backend
+                    .borrow()
+                    .as_ref()
+                    .map(|be| be.monitor_levels())
+                    .unwrap_or_default();
+                if !levels.is_empty() {
+                    analyzer_panel.borrow().update(&levels);
+                }
 
                 if headroom.borrow().auto_safe_enabled() {
                     let raw_peak = crate::core::estimate_response_peak_db(
