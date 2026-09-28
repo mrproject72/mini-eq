@@ -17,6 +17,9 @@ pub struct AnalyzerPanel {
     pub display_gain_scale: gtk4::Scale,
     pub freeze_switch: gtk4::Switch,
     pub levels: Rc<RefCell<Vec<f64>>>,
+    /// Set by the Freeze switch: `update()` drops incoming frames so the
+    /// displayed spectrum holds still.
+    pub frozen: Rc<std::cell::Cell<bool>>,
 }
 
 impl AnalyzerPanel {
@@ -37,7 +40,10 @@ impl AnalyzerPanel {
         drawing_area.set_vexpand(true);
         drawing_area.set_hexpand(true);
 
-        let smoothing_adj = gtk4::Adjustment::new(50.0, 15.0, 95.0, 1.0, 5.0, 0.0);
+        // Default 30% maps to ANALYZER_RESPONSE_DEFAULT (2.0) via
+        // PipeWireBackend::set_analyzer_smoothing, so the panel default
+        // reproduces the analyzer's own default.
+        let smoothing_adj = gtk4::Adjustment::new(30.0, 15.0, 95.0, 1.0, 5.0, 0.0);
         let smoothing_scale = gtk4::Scale::new(gtk4::Orientation::Horizontal, Some(&smoothing_adj));
         smoothing_scale.set_hexpand(true);
         smoothing_scale.set_tooltip_text(Some("Smoothing"));
@@ -86,12 +92,25 @@ impl AnalyzerPanel {
             display_gain_scale,
             freeze_switch,
             levels,
+            frozen: Rc::new(std::cell::Cell::new(false)),
         }
     }
 
+    /// Push a new spectrum frame. Ignored while frozen so the user can hold
+    /// a frame for inspection.
     pub fn update(&self, levels: &[f64]) {
+        if self.frozen.get() {
+            return;
+        }
         *self.levels.borrow_mut() = levels.to_vec();
         self.drawing_area.queue_draw();
+    }
+
+    pub fn set_frozen(&self, frozen: bool) {
+        self.frozen.set(frozen);
+        if !frozen {
+            self.drawing_area.queue_draw();
+        }
     }
 
     pub fn widget(&self) -> &gtk4::Box {

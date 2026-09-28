@@ -685,6 +685,66 @@ impl MiniEqWindow {
             // rendered blank -- the analyzer looked "missing" even though
             // the whole pipeline existed except for this last hop.
             let analyzer_panel = utility.analyzer.clone();
+
+            // Wire the analyzer panel controls to the backend. These sliders
+            // existed but were decorative -- nothing read them.
+            {
+                let backend_ctl = backend.clone();
+                let smoothing = utility.analyzer.borrow().smoothing_scale.clone();
+                smoothing.connect_value_changed(move |sc| {
+                    if let Some(be) = backend_ctl.borrow_mut().as_mut() {
+                        be.set_analyzer_smoothing(sc.value() / 100.0);
+                    }
+                });
+            }
+            {
+                let backend_ctl = backend.clone();
+                let gain = utility.analyzer.borrow().display_gain_scale.clone();
+                gain.connect_value_changed(move |sc| {
+                    if let Some(be) = backend_ctl.borrow_mut().as_mut() {
+                        be.set_analyzer_display_gain(sc.value());
+                    }
+                });
+            }
+            {
+                let panel = utility.analyzer.clone();
+                let freeze = utility.analyzer.borrow().freeze_switch.clone();
+                freeze.connect_state_set(move |_sw, on| {
+                    panel.borrow().set_frozen(on);
+                    glib::Propagation::Proceed
+                });
+            }
+            // The panel's enable toggle MIRRORS the graph-header Monitor
+            // switch rather than being a second independent control: both drive
+            // the same monitor, and the tick keeps the panel's toggle showing
+            // the true state. The guard stops set_active() re-triggering
+            // `toggled` and fighting the header switch.
+            let analyzer_toggle_sync = Rc::new(std::cell::Cell::new(false));
+            {
+                let backend_ctl = backend.clone();
+                let toggle = utility.analyzer.borrow().enabled_toggle.clone();
+                let guard = analyzer_toggle_sync.clone();
+                toggle.connect_toggled(move |tb| {
+                    if guard.get() {
+                        return;
+                    }
+                    let want = tb.is_active();
+                    let mut b = backend_ctl.borrow_mut();
+                    let Some(be) = b.as_mut() else { return };
+                    if want {
+                        if !be.monitor_enabled() {
+                            if let Some(target) = be.default_output_sink() {
+                                if let Err(e) = be.start_monitor(&target) {
+                                    log::warn!("analyzer enable failed: {}", e);
+                                }
+                            }
+                        }
+                    } else if be.monitor_enabled() {
+                        be.stop_monitor();
+                    }
+                });
+            }
+
             glib::timeout_add_local(std::time::Duration::from_millis(33), move || {
                 // Smooth override: the graph, the peak estimate and the
                 // backend push must all see the SAME effective bands, or the
@@ -740,6 +800,20 @@ impl MiniEqWindow {
                     .unwrap_or_default();
                 if !levels.is_empty() {
                     analyzer_panel.borrow().update(&levels);
+                }
+                // Keep the panel's enable toggle reflecting reality.
+                {
+                    let real = backend
+                        .borrow()
+                        .as_ref()
+                        .map(|be| be.monitor_enabled())
+                        .unwrap_or(false);
+                    let toggle = analyzer_panel.borrow().enabled_toggle.clone();
+                    if toggle.is_active() != real {
+                        analyzer_toggle_sync.set(true);
+                        toggle.set_active(real);
+                        analyzer_toggle_sync.set(false);
+                    }
                 }
 
                 if headroom.borrow().auto_safe_enabled() {

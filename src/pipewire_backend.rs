@@ -253,6 +253,29 @@ impl PipeWireBackend {
         self.analyzer.display_levels()
     }
 
+    /// Map the UI smoothing percentage (0.15..0.95, matching upstream's
+    /// slider scale) onto the analyzer's `response_speed`.
+    ///
+    /// The two are inverse: more smoothing means a SLOWER response. The
+    /// speed range spans 0.02..15 (750x), so the interpolation is done in
+    /// log space -- a linear map would make the slider almost useless at
+    /// the fast end.
+    ///
+    /// Calibration: 30% smoothing lands on ANALYZER_RESPONSE_DEFAULT (2.0),
+    /// so the panel default reproduces the analyzer's own default.
+    pub fn set_analyzer_smoothing(&mut self, smoothing: f64) {
+        self.analyzer
+            .set_response_speed(crate::analyzer::smoothing_percent_to_response_speed(
+                smoothing,
+            ));
+    }
+
+    /// Display gain in dB applied to the spectrum drawing only (does not
+    /// affect audio).
+    pub fn set_analyzer_display_gain(&mut self, gain_db: f64) {
+        self.analyzer.set_display_gain(gain_db);
+    }
+
     /// Windowed output peak in dBFS (from the live monitor). Returns None
     /// when the monitor is off OR no audio was captured in the window (e.g.
     /// the capture stream was orphaned by an engine restart). Returning None

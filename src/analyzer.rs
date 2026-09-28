@@ -798,6 +798,21 @@ pub fn analyzer_fft_size(sample_rate: f64) -> usize {
     sized.clamp(ANALYZER_FFT_MIN_SIZE, ANALYZER_FFT_MAX_SIZE)
 }
 
+/// Map a UI smoothing percentage (0.15..0.95, upstream's slider scale)
+/// onto the analyzer's `response_speed`.
+///
+/// Inverse: more smoothing = slower response. Interpolated in log space
+/// because the speed range spans 0.02..15 (750x); a linear map would make
+/// the slider nearly useless at the fast end.
+///
+/// Calibration: 30% -> ANALYZER_RESPONSE_DEFAULT (2.0).
+pub fn smoothing_percent_to_response_speed(smoothing: f64) -> f64 {
+    let s = smoothing.clamp(0.15, 0.95);
+    let lo = ANALYZER_RESPONSE_MIN.ln();
+    let hi = ANALYZER_RESPONSE_MAX.ln();
+    (lo + (1.0 - s) * (hi - lo)).exp()
+}
+
 pub fn analyzer_smoothing_alpha(response_speed: f64, frame_count: usize, sample_rate: f64) -> f64 {
     let speed = clamp(response_speed, ANALYZER_RESPONSE_MIN, ANALYZER_RESPONSE_MAX);
     1.0 - (-2.0 * std::f64::consts::PI * speed * (1.max(frame_count) as f64)
@@ -1194,6 +1209,42 @@ mod tests {
         assert_eq!(analyzer_db_to_display_norm(6.0, 0.0), 1.0);
         // with display gain
         assert!(analyzer_db_to_display_norm(-70.0, 10.0) > 0.0);
+    }
+
+    #[test]
+    fn smoothing_percent_mapping_is_monotone_inverse() {
+        // More smoothing must always mean a slower (lower) response speed.
+        let mut prev = f64::MAX;
+        for i in 0..=80 {
+            let pct = 0.15 + (i as f64) * 0.01;
+            let sp = smoothing_percent_to_response_speed(pct);
+            assert!(
+                sp < prev,
+                "mapping not strictly decreasing at {pct:.2}: {sp} vs {prev}"
+            );
+            prev = sp;
+        }
+    }
+
+    #[test]
+    fn smoothing_percent_mapping_hits_the_default_at_30_percent() {
+        let sp = smoothing_percent_to_response_speed(0.30);
+        assert!(
+            (sp - ANALYZER_RESPONSE_DEFAULT).abs() < 0.15,
+            "30% should land near ANALYZER_RESPONSE_DEFAULT \
+             ({ANALYZER_RESPONSE_DEFAULT}), got {sp}"
+        );
+    }
+
+    #[test]
+    fn smoothing_percent_mapping_stays_in_range() {
+        for i in 0..=200 {
+            let sp = smoothing_percent_to_response_speed(0.1 + (i as f64) * 0.005);
+            assert!(
+                (ANALYZER_RESPONSE_MIN - 1e-9..=ANALYZER_RESPONSE_MAX + 1e-9).contains(&sp),
+                "out of range: {sp}"
+            );
+        }
     }
 
     #[test]
