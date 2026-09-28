@@ -66,6 +66,20 @@ discipline. Needs:
   `docs/*-updates.md`
 - README updated with the version history
 
+## Filter-chain output re-target (needs live validation)
+
+The monitor now follows a system default-output change, but the
+filter-chain's own output does not. Implementing it means removing the
+existing `mini_eq_sink_output -> old_sink` link and creating a new one.
+
+Do NOT ship this without testing on real hardware: a wrong link produces
+either silence or a feedback loop. Needs a machine with at least two
+output devices and a live sink switch to validate against.
+
+Building blocks already present in `routing.rs`: `find_node_id_by_name`,
+`find_node_target`, `get_links` (RouteInfo has source/target/link ids),
+`remove_link`, `link_nodes`.
+
 ## Feature gaps
 
 - **Preset lifecycle** — no revert/reapply, import/export/delete, file

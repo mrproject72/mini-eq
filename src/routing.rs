@@ -420,6 +420,28 @@ impl RoutingEngine {
             .or_else(|| self.configured_audio_sink.borrow().clone())
     }
 
+    /// Re-read `default.audio.sink` from the metadata, bypassing the
+    /// cached value, so a change of the system default output can be
+    /// DETECTED at runtime.
+    ///
+    /// `default_audio_sink_name()` only pumps the loop when the cache is
+    /// empty, so it can never observe a later change -- which is why the
+    /// app used to keep the sink it started with forever.
+    pub fn refresh_default_audio_sink_name(&mut self) -> Option<String> {
+        self.ensure_default_metadata().ok()?;
+        // The metadata property is delivered asynchronously; pump briefly
+        // so the event lands before we read it back.
+        for _ in 0..5 {
+            self.mainloop
+                .loop_()
+                .iterate(Timeout::Finite(Duration::from_millis(10)));
+        }
+        self.default_audio_sink
+            .borrow()
+            .clone()
+            .or_else(|| self.configured_audio_sink.borrow().clone())
+    }
+
     /// Find a node's bound id AND its `object.serial` by node.name.
     /// The serial is required for the modern `target.object` metadata key
     /// (WirePlumber policy matches on the object serial, not just the id).

@@ -938,7 +938,33 @@ impl MiniEqWindow {
             let set_safe = utility.headroom.borrow().set_safe_button.clone();
             let headroom_warning = headroom_warning.clone();
             let blink_on = Rc::new(std::cell::Cell::new(false));
+            let last_default_sink: Rc<std::cell::Cell<String>> =
+                Rc::new(std::cell::Cell::new(String::new()));
+            let backend_sink_watch = backend.clone();
+            let summary_sink_watch = utility.monitor_summary.clone();
             glib::timeout_add_local(std::time::Duration::from_millis(500), move || {
+                // Detect the system default output changing and follow it
+                // with the MONITOR. The monitor is a separate capture
+                // stream, so stop+start cannot interrupt the EQ audio path.
+                //
+                // The filter-chain's own output re-link is deliberately
+                // NOT attempted here: doing it blind (remove link + create
+                // link) risks silence or a feedback loop and needs live
+                // validation against a real sink switch. See docs/TODO.md.
+                if let Some(be) = backend_sink_watch.borrow_mut().as_mut() {
+                    if let Some(now) = be.refresh_default_audio_sink_name() {
+                        let prev = last_default_sink.replace(now.clone());
+                        if !prev.is_empty() && prev != now && be.monitor_enabled() {
+                            log::info!("Default output changed {prev} -> {now}, following monitor");
+                            match be.retarget_monitor(&now) {
+                                Ok(()) => {
+                                    summary_sink_watch.set_text("On \u{00b7} Live (retargeted)");
+                                }
+                                Err(e) => log::warn!("Monitor retarget failed: {e}"),
+                            }
+                        }
+                    }
+                }
                 if headroom_warning.get() {
                     blink_on.set(!blink_on.get());
                     if blink_on.get() {

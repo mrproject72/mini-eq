@@ -242,6 +242,15 @@ impl PipeWireBackend {
         }
     }
 
+    /// Move the output monitor to a different sink. Stop + start is the
+    /// safe way to do this: the monitor is an independent capture stream,
+    /// so restarting it cannot interrupt the EQ audio path.
+    pub fn retarget_monitor(&mut self, new_sink: &str) -> Result<(), Error> {
+        info!("Retargeting output monitor -> {new_sink}");
+        self.stop_monitor();
+        self.start_monitor(new_sink)
+    }
+
     /// Stop the output monitor.
     pub fn stop_monitor(&mut self) {
         self.pending_monitor_target = None;
@@ -517,6 +526,12 @@ impl PipeWireBackend {
     /// PipeWire machine (no hardcoded device assumptions).
     pub fn default_output_sink(&mut self) -> Option<String> {
         self.routing.default_audio_sink_name()
+    }
+
+    /// Re-read the system default output sink, bypassing the cache so a
+    /// runtime change is observable.
+    pub fn refresh_default_audio_sink_name(&mut self) -> Option<String> {
+        self.routing.refresh_default_audio_sink_name()
     }
 
     pub fn auto_route_to_sink(&mut self, sink_name: &str) -> Result<(), Error> {

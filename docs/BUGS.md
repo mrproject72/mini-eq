@@ -64,7 +64,20 @@
   toggle. Verified: "Monitor restored on <sink>" on launch.
   ~~Monitor settings popover sliders unwired~~ **FIXED** — smoothing,
   display-gain and freeze are all wired to the backend now.** The smoothing / display-gain sliders and `settings.rs::load_monitor_enabled`/`save_monitor_enabled` exist but nothing calls them. (Also: freeze switch missing window-side.)
-- **No runtime re-target on default-sink change.** The monitor and filter-chain keep the sink they were started with; switching the system default output does not follow.
+- **Default-sink change: the MONITOR now follows, the filter-chain output
+  still does not (partial fix).**
+  - `routing::refresh_default_audio_sink_name()` was added because
+    `default_audio_sink_name()` only pumps the loop when its cache is
+    empty, so it could never observe a later change.
+  - The 500 ms tick now detects the default output changing and moves the
+    monitor with `retarget_monitor()`. This is the safe half: the monitor
+    is an independent capture stream, so stop+start cannot interrupt the
+    EQ audio path.
+  - **Still open:** the filter-chain's own output re-link. Doing it blind
+    (remove link + create link) risks silence or a feedback loop and needs
+    live validation against a real sink switch, so it was deliberately not
+    attempted. Until then, EQ'd audio keeps going to the sink the engine
+    was started with.
 - **No `node.dont-move` / foreign-target guards on the EQ sink.** WirePlumber or other tools can re-link around it.
 - ~~Dead code in `analyzer.rs`.~~ **Partially cleaned — and two of the
   three reported items were NOT dead.** Verified before removing:
