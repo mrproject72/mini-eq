@@ -584,7 +584,8 @@ pub fn biquad_response_at_frequency(
     }
 }
 
-pub fn total_response_db(
+/// Unclamped response in dB — mirrors upstream `total_response_db(..., clamp_output=False)`.
+pub fn total_response_db_unclamped(
     bands: &[EqBand],
     preamp_db: f64,
     sample_rate: f64,
@@ -599,8 +600,17 @@ pub fn total_response_db(
     }
 
     let magnitude = response.norm().max(1e-12);
-    let db = preamp_db + 20.0 * magnitude.log10();
-    db.clamp(GRAPH_DB_MIN - 12.0, GRAPH_DB_MAX + 12.0)
+    preamp_db + 20.0 * magnitude.log10()
+}
+
+pub fn total_response_db(
+    bands: &[EqBand],
+    preamp_db: f64,
+    sample_rate: f64,
+    frequency: f64,
+) -> f64 {
+    total_response_db_unclamped(bands, preamp_db, sample_rate, frequency)
+        .clamp(GRAPH_DB_MIN - 12.0, GRAPH_DB_MAX + 12.0)
 }
 
 pub fn total_response_db_at_frequencies(
@@ -612,6 +622,21 @@ pub fn total_response_db_at_frequencies(
     frequencies
         .iter()
         .map(|&f| total_response_db(bands, preamp_db, sample_rate, f))
+        .collect()
+}
+
+/// Same as [`total_response_db_at_frequencies`] but without the graph-display
+/// clamp. Used by [`estimate_response_peak_db`] so stacked boosts are not
+/// silently capped at `GRAPH_DB_MAX + 12`.
+pub fn total_response_db_at_frequencies_unclamped(
+    bands: &[EqBand],
+    preamp_db: f64,
+    sample_rate: f64,
+    frequencies: &[f64],
+) -> Vec<f64> {
+    frequencies
+        .iter()
+        .map(|&f| total_response_db_unclamped(bands, preamp_db, sample_rate, f))
         .collect()
 }
 
@@ -638,7 +663,11 @@ pub fn response_peak_frequencies(bands: &[EqBand], sample_rate: f64) -> Vec<f64>
 
 pub fn estimate_response_peak_db(bands: &[EqBand], preamp_db: f64, sample_rate: f64) -> f64 {
     let frequencies = response_peak_frequencies(bands, sample_rate);
-    let responses = total_response_db_at_frequencies(bands, preamp_db, sample_rate, &frequencies);
+    // Upstream passes clamp_output=False: the headroom/Auto-Safe logic must see
+    // the TRUE curve peak, not the graph-display clamp (+36 dB), or it
+    // under-compensates when boosts stack well past the preamp range.
+    let responses =
+        total_response_db_at_frequencies_unclamped(bands, preamp_db, sample_rate, &frequencies);
     responses
         .into_iter()
         .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
@@ -1155,6 +1184,48 @@ pub fn clear_output_preset_link(keys: &[String]) -> anyhow::Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_estimate_response_peak_db_is_unclamped() {
+        // Stacked Hi-shelf boosts sum well past the graph-display clamp
+        // (GRAPH_DB_MAX + 12 = +36 dB). The estimate must report the true
+        // peak so Auto-Safe / headroom see reality (upstream clamp_output=False).
+        let mut m = default_bands();
+        for i in 6..=9 {
+            m[i].filter_type = FilterType::HiShelf;
+            m[i].gain_db = 20.0;
+        }
+        let raw = estimate_response_peak_db(&m, 0.0, SAMPLE_RATE);
+        assert!(
+            raw > GRAPH_DB_MAX + 12.0,
+            "expected true peak above the +36 dB display clamp, got {raw:.1}"
+        );
+
+        // A single +20 dB shelf stays near its true peak (23.5 dB measured).
+        let mut b = default_bands();
+        b[5].filter_type = FilterType::HiShelf;
+        b[5].frequency = 1000.0;
+        b[5].gain_db = 20.0;
+        let single = estimate_response_peak_db(&b, 0.0, SAMPLE_RATE);
+        assert!(
+            single > 20.0 && single < 30.0,
+            "single shelf peak {single:.1}"
+        );
+
+        // Auto-Safe with the true peak clamps at the preamp floor; the residual
+        // over-target is expected (preamp range cannot absorb +84 dB of boost),
+        // but the caller now knows the real number.
+        let desired = crate::window_headroom::auto_safe_preamp_db(
+            raw,
+            crate::window_headroom::AUTO_SAFE_TARGET_DBFS,
+        );
+        assert_eq!(desired, EQ_PREAMP_MIN_DB);
+        let after = estimate_response_peak_db(&m, desired, SAMPLE_RATE);
+        assert!(
+            after > GRAPH_DB_MAX + 12.0,
+            "peak after floor-clamped preamp: {after:.1}"
+        );
+    }
 
     #[test]
     fn test_identity_coefficients() {
