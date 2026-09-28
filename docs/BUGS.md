@@ -22,9 +22,19 @@
 
 ### P2 — previously recorded
 
-- **The entire app menu is dead — no GActions are registered anywhere.**
+- ~~**The entire app menu is dead — no GActions are registered anywhere.**~~
+  **FIXED.** `app.preferences`, `app.about` and `app.quit` are now
+  registered as `gio::SimpleAction`s on the window. Preferences opens the
+  existing (previously unreachable) `PreferencesDialog`, About shows an
+  `AdwAboutDialog` wired to `CARGO_PKG_VERSION` and the new repo, Quit
+  closes the window.
 
-- **The entire app menu is dead — no GActions are registered anywhere.**
+- ~~**The entire app menu is dead — no GActions are registered anywhere.**~~
+  **FIXED.** `app.preferences`, `app.about` and `app.quit` are now
+  registered as `gio::SimpleAction`s on the window. Preferences opens the
+  existing (previously unreachable) `PreferencesDialog`, About shows an
+  `AdwAboutDialog` wired to `CARGO_PKG_VERSION` and the new repo, Quit
+  closes the window.
   `create_menu_model()` wires `app.about`, `app.preferences` and
   `app.quit`, but `grep` finds **zero** `create_action` / `add_action`
   calls in the whole codebase. Every hamburger-menu item is a no-op.

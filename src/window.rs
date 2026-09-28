@@ -147,6 +147,44 @@ impl MiniEqWindow {
         menu_button.set_menu_model(Some(&menu_model));
         header_bar.pack_end(&menu_button);
 
+        // --- App actions -------------------------------------------
+        // create_menu_model() references app.preferences / app.about /
+        // app.quit, but no GAction was ever registered anywhere in the
+        // codebase, so every hamburger-menu item was a silent no-op.
+        {
+            let prefs_action = gio::SimpleAction::new("preferences", None);
+            let win = window.clone();
+            prefs_action.connect_activate(move |_, _| {
+                crate::window_preferences::PreferencesDialog::new(&win).show();
+            });
+            window.add_action(&prefs_action);
+        }
+        {
+            let about_action = gio::SimpleAction::new("about", None);
+            let win = window.clone();
+            about_action.connect_activate(move |_, _| {
+                let about = adw::AboutDialog::new();
+                about.set_application_name("mini-eq RR");
+                about.set_version(env!("CARGO_PKG_VERSION"));
+                about.set_comments(
+                    "Rust rewrite of mini-eq: system-wide parametric EQ for PipeWire.",
+                );
+                about.set_website("https://github.com/mrproject72/mini-eq-RR");
+                about.set_developers(&["mrproject72"]);
+                about.set_license_type(gtk4::License::Gpl30Only);
+                about.present(Some(&win));
+            });
+            window.add_action(&about_action);
+        }
+        {
+            let quit_action = gio::SimpleAction::new("quit", None);
+            let win = window.clone();
+            quit_action.connect_activate(move |_, _| {
+                win.close();
+            });
+            window.add_action(&quit_action);
+        }
+
         // System-wide EQ toggle with an explicit ON/OFF readout. The bare
         // switch left the routing state ambiguous at a glance, and the
         // tooltip is only reachable with the pointer.
