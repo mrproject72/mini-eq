@@ -2,6 +2,29 @@
 
 ## Open Bugs
 
+### P1 — user-visible, small fix
+
+- **Analyzer renders blank: it is never fed data.** `AnalyzerPanel::update(&self,
+  levels: &[f64])` exists and the panel has a drawing area, header, smoothing /
+  display-gain / freeze controls, and it IS in the sidebar stack
+  (`PAGE_ANALYZER`). But **nothing ever calls `update()`** — `grep` finds no
+  consumer of `utility.analyzer` outside `window_utility.rs`. Meanwhile the
+  backend *does* capture the data (`pipewire_backend.rs:150
+  analyzer.start_capture(...)`) and D-Bus exposes it
+  (`dbus_control.rs:398 handler.analyzer_levels()`). So the pipeline exists
+  end-to-end except for the last hop into the panel. Fix: feed
+  `utility.analyzer.update(levels)` from the existing 33 ms tick.
+- **Cannot name a new preset or rename one.** `PresetPanel` has
+  `load_library_preset`, `reset_to_neutral`, `revert_to_baseline`,
+  `refresh_list`, `start_file_monitoring` — but **no save-as / rename**.
+  Presets can be loaded and reverted but never created with a chosen name or
+  renamed. Needs a name entry (dialog or inline) wired to
+  `preset_storage_dir()`.
+
+### P2 — previously recorded
+
+- **The entire app menu is dead — no GActions are registered anywhere.**
+
 - **The entire app menu is dead — no GActions are registered anywhere.**
   `create_menu_model()` wires `app.about`, `app.preferences` and
   `app.quit`, but `grep` finds **zero** `create_action` / `add_action`

@@ -230,9 +230,15 @@ button.clip-safe-ok:disabled {
     border-color: color-mix(in srgb, var(--success-color) 55%, transparent);
 }
 
-/* Smooth engaged: the menu button lights up the same green so the active
-   mode is obvious without opening the popover. */
-button.smooth-on {
+/* Smooth engaged: the dropdown lights up the same green so the active mode
+   is obvious without opening the popover.
+   NOTE: gtk4::MenuButton renders as a `menubutton` CSS node wrapping an
+   internal `button`. The class lands on the `menubutton`, so a
+   `button.smooth-on` selector NEVER matches -- that is why an earlier
+   attempt here appeared to do nothing. Target both the node and its
+   internal button. */
+menubutton.smooth-on > button,
+menubutton.smooth-on button {
     color: var(--success-color);
     background-color: color-mix(in srgb, var(--success-color) 22%, transparent);
     border-color: var(--success-color);
