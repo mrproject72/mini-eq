@@ -397,7 +397,7 @@ impl MiniEqWindow {
         {
             let registry = fader_registry.clone();
             let editor = band_editor.clone();
-            let width_scale = utility.headroom.borrow().smooth_width_scale.clone();
+            let width_spin = utility.headroom.borrow().smooth_width_spin.clone();
             utility
                 .headroom
                 .borrow()
@@ -409,7 +409,7 @@ impl MiniEqWindow {
                     }
                     editor.set_type_and_q_enabled(!on);
                     // The width control only means anything while Smooth is on.
-                    width_scale.set_sensitive(on);
+                    width_spin.set_sensitive(on);
                     glib::Propagation::Proceed
                 });
         }

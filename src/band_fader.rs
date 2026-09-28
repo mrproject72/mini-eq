@@ -22,6 +22,7 @@ const GAIN_COARSE_STEP_DB: f64 = 3.0;
 const GAIN_PAGE_STEP_DB: f64 = 3.0;
 const GAIN_DRAG_FINE_MULTIPLIER: f64 = 0.20;
 const GAIN_DRAG_COARSE_MULTIPLIER: f64 = 2.0;
+const CLICK_MAX_TRAVEL_PX: f64 = 5.0;
 const FADER_DRAG_START_THRESHOLD_PX: f64 = 2.0;
 const TICK_GAINS: [f64; 5] = [-24.0, -12.0, 0.0, 12.0, 24.0];
 const TICK_ZERO_GAIN: f64 = 0.0;
@@ -224,7 +225,32 @@ impl EqBandFader {
         {
             let fader_clone = fader.clone();
             let click = gtk4::GestureClick::new();
-            click.connect_pressed(move |_gesture, _press_count, _x, _y| {
+            // Selection is a TOGGLE, so it must fire on a genuine click
+            // only. GestureClick::pressed fires the moment the button goes
+            // down -- before we know whether the user is dragging -- which
+            // meant that grabbing an already-selected fader to move it
+            // deselected it first, making the editor vanish on the second
+            // drag. Record the press point and decide on release instead.
+            let press_xy: Rc<RefCell<Option<(f64, f64)>>> = Rc::new(RefCell::new(None));
+            let press_pressed = press_xy.clone();
+            click.connect_pressed(move |_gesture, _press_count, x, y| {
+                *press_pressed.borrow_mut() = Some((x, y));
+            });
+            let press_released = press_xy.clone();
+            click.connect_released(move |_gesture, _press_count, x, y| {
+                let Some((px, py)) = press_released.borrow_mut().take() else {
+                    return;
+                };
+                // Anything past this distance was a drag, not a click.
+                if f64::hypot(x - px, y - py) > CLICK_MAX_TRAVEL_PX {
+                    return;
+                }
+                // Also suppress if the drag gesture actually consumed a move,
+                // in case the two gestures disagree on the threshold.
+                let dragged = fader_clone.borrow().dragging_gain;
+                if dragged {
+                    return;
+                }
                 let (index, select) = {
                     let f = fader_clone.borrow();
                     (f.index, f.selection_changed_callback.clone())
@@ -232,6 +258,10 @@ impl EqBandFader {
                 if let Some(cb) = select {
                     cb(index);
                 }
+            });
+            let press_cancel = press_xy.clone();
+            click.connect_cancel(move |_, _| {
+                press_cancel.borrow_mut().take();
             });
             fader.borrow().drawing_area.add_controller(click);
         }

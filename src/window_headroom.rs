@@ -16,6 +16,11 @@ pub const HEADROOM_RISK_LIMIT_DB: f64 = 0.0;
 /// one-shot "Set Safe" margin (`peak + 1.0` ⇒ peak lands at −1 dBFS).
 pub const AUTO_SAFE_TARGET_DBFS: f64 = -1.0;
 
+/// Fixed width of the Set Safe button so label changes never reflow the row.
+const SET_SAFE_BUTTON_WIDTH_PX: i32 = 84;
+/// Width of the compact preamp trim.
+const PREAMP_SCALE_WIDTH_PX: i32 = 72;
+
 /// Compute the preamp that keeps the EQ curve's peak at or below
 /// `target_dbfs`, never boosting above 0 dB. `raw_peak_db` is the curve peak
 /// with preamp = 0. This is the continuous form of the one-shot "Set Safe":
@@ -93,7 +98,11 @@ pub struct HeadroomPanel {
     pub smooth: Rc<std::cell::Cell<bool>>,
     /// Smooth spread control (Gaussian sigma, in bands) and the live value
     /// read by the Smooth override. Min = 0.45 moves ONLY the dragged band.
-    pub smooth_width_scale: gtk4::Scale,
+    /// Width control lives inside the Smooth popover as a +/- spin.
+    pub smooth_width_spin: gtk4::SpinButton,
+    /// Single menu button owning the Smooth switch and its width spin, so
+    /// the output row spends ONE cell on Smooth instead of two.
+    pub smooth_menu: gtk4::MenuButton,
     pub smooth_spread_bands: Rc<std::cell::Cell<f64>>,
     pub state: Rc<RefCell<HeadroomState>>,
     pub peak_value: Rc<RefCell<f64>>,
@@ -114,7 +123,7 @@ impl HeadroomPanel {
         // No inline value: that is what was costing ~40px of row width. The
         // tooltip carries the number instead and is kept live below.
         preamp_scale.set_draw_value(false);
-        preamp_scale.set_size_request(96, -1);
+        preamp_scale.set_size_request(PREAMP_SCALE_WIDTH_PX, -1);
         preamp_scale.set_valign(gtk4::Align::Center);
         preamp_scale.set_tooltip_text(Some("Preamp gain: 0.0 dB"));
         {
@@ -145,8 +154,15 @@ impl HeadroomPanel {
         let detail_label = gtk4::Label::new(Some(""));
         detail_label.set_css_classes(&["numeric"]);
 
-        let set_safe_button = gtk4::Button::with_label("Set Safe");
-        set_safe_button.set_visible(false);
+        // Always present. Hiding it made every other item in the output row
+        // slide sideways whenever the risk state changed, so it now stays put
+        // and is merely insensitive when there is nothing to do. The width
+        // is fixed to the widest label so swapping the text cannot move the
+        // neighbours either.
+        let set_safe_button = gtk4::Button::with_label("Safe");
+        set_safe_button.set_sensitive(false);
+        set_safe_button.set_size_request(SET_SAFE_BUTTON_WIDTH_PX, -1);
+        set_safe_button.set_halign(gtk4::Align::Start);
 
         let auto_safe_switch = gtk4::Switch::new();
         auto_safe_switch.set_valign(gtk4::Align::Center);
@@ -185,28 +201,61 @@ impl HeadroomPanel {
         // which breaks the curve into separate bumps with troughs between.
         let (w_min, w_max, w_default) = crate::core::smooth_spread_bounds_bands();
         let smooth_width_adj = gtk4::Adjustment::new(w_default, w_min, w_max, 0.05, 0.1, 0.0);
-        let smooth_width_scale =
-            gtk4::Scale::new(gtk4::Orientation::Horizontal, Some(&smooth_width_adj));
-        smooth_width_scale.set_digits(2);
-        smooth_width_scale.set_draw_value(true);
-        smooth_width_scale.set_value_pos(gtk4::PositionType::Right);
-        smooth_width_scale.set_size_request(110, -1);
-        smooth_width_scale.set_valign(gtk4::Align::Center);
-        smooth_width_scale.set_tooltip_text(Some(
+        let smooth_width_spin = gtk4::SpinButton::new(Some(&smooth_width_adj), 0.05, 2);
+        smooth_width_spin.set_digits(2);
+        smooth_width_spin.set_width_chars(5);
+        smooth_width_spin.set_max_width_chars(5);
+        smooth_width_spin.set_valign(gtk4::Align::Center);
+        smooth_width_spin.set_tooltip_text(Some(
             "How many bands move when you drag one.\n\
-             Left  = only the dragged band (1 band).\n\
-             Right = most of the spectrum moves together.\n\
+             Minimum = only the dragged band (1 band).\n\
+             Higher  = more of the spectrum moves together.\n\
              The bell width follows automatically so the bump stays smooth.",
         ));
         let smooth_spread_bands = Rc::new(std::cell::Cell::new(w_default));
         {
             let smooth_spread_bands = smooth_spread_bands.clone();
-            smooth_width_scale.connect_value_changed(move |s| {
+            smooth_width_spin.connect_value_changed(move |s| {
                 smooth_spread_bands.set(s.value());
             });
         }
         // The width only matters while Smooth is active.
-        smooth_width_scale.set_sensitive(false);
+        smooth_width_spin.set_sensitive(false);
+
+        // --- Smooth popover -------------------------------------------
+        // The switch and its width control live inside one menu button.
+        // This removes an entire cell from the output row, which is what
+        // was overflowing at the minimum window width.
+        let smooth_menu = gtk4::MenuButton::builder().label("Smooth").build();
+        {
+            let pop = gtk4::Box::new(gtk4::Orientation::Vertical, 10);
+            pop.set_margin_start(14);
+            pop.set_margin_end(14);
+            pop.set_margin_top(12);
+            pop.set_margin_bottom(12);
+
+            let sw_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 12);
+            let sw_label = gtk4::Label::new(Some("Smooth band editing"));
+            sw_label.set_halign(gtk4::Align::Start);
+            sw_label.set_hexpand(true);
+            sw_row.append(&sw_label);
+            sw_row.append(&smooth_switch);
+            pop.append(&sw_row);
+
+            pop.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
+
+            let w_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 12);
+            let w_label = gtk4::Label::new(Some("Width (bands)"));
+            w_label.set_halign(gtk4::Align::Start);
+            w_label.set_hexpand(true);
+            w_row.append(&w_label);
+            w_row.append(&smooth_width_spin);
+            pop.append(&w_row);
+
+            let popover = gtk4::Popover::new();
+            popover.set_child(Some(&pop));
+            smooth_menu.set_popover(Some(&popover));
+        }
 
         let container = gtk4::Box::new(gtk4::Orientation::Vertical, 6);
         container.set_css_classes(&["headroom-panel-safe"]);
@@ -251,7 +300,8 @@ impl HeadroomPanel {
             auto_safe,
             smooth_switch,
             smooth,
-            smooth_width_scale,
+            smooth_width_spin,
+            smooth_menu,
             smooth_spread_bands,
             state,
             peak_value,
@@ -319,7 +369,9 @@ impl HeadroomPanel {
         // is already where Auto-Safe (or its floor) puts it, so the button
         // would be a no-op that re-opens the same Risk state.
         let needs_fix = peak_db > 0.5 && !self.auto_safe_enabled();
-        self.set_safe_button.set_visible(needs_fix);
+        // Visible always; only the label and sensitivity change.
+        self.set_safe_button
+            .set_label(if needs_fix { "Set Safe" } else { "Safe" });
         self.set_safe_button.set_sensitive(needs_fix);
     }
 

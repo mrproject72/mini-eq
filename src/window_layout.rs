@@ -89,14 +89,19 @@ pub fn build_band_faders(
 /// back to its tooltip, so the row stays compact instead of being cut.
 const OUTPUT_ROW_COMPACT_WIDTH: i32 = 1000;
 
+/// Fixed cell widths for the output row (see `fixed_cell`).
+const CELL_W_AUTO_SAFE: i32 = 128;
+const CELL_W_SMOOTH: i32 = 104;
+const CELL_W_PREAMP: i32 = 148;
+const CELL_W_STATUS: i32 = 136;
+const CELL_W_SET_SAFE: i32 = 92;
+
 fn build_output_control_row(utility: &UtilityPane) -> adw::WrapBox {
     // WrapBox rather than a plain Box: at narrow widths items wrap onto a
     // second line instead of being clipped, so nothing is ever cut off.
-    // Explicit child/line spacing: the WrapBox default is tight enough that
-    // the switches read as one merged blob once the row wraps.
     let row = adw::WrapBox::builder()
-        .child_spacing(14)
-        .line_spacing(12)
+        .child_spacing(12)
+        .line_spacing(10)
         .build();
     row.set_orientation(gtk4::Orientation::Horizontal);
     row.set_css_classes(&["output-control-row"]);
@@ -107,74 +112,67 @@ fn build_output_control_row(utility: &UtilityPane) -> adw::WrapBox {
     let headroom = utility.headroom.borrow();
     let mut labels: Vec<gtk4::Label> = Vec::new();
 
-    let auto_safe_item = control(
-        "Auto-Safe",
-        "Let the output preamp follow the peak automatically",
+    // Every cell has a FIXED width. Previously the cells sized to their
+    // content, so hiding the preamp or the width control slid everything
+    // else sideways. Fixed cells mean a control appearing or vanishing never
+    // moves its neighbours, and the wrap points are deterministic too.
+    let auto_safe_item = fixed_cell(
+        CELL_W_AUTO_SAFE,
+        Some((
+            "Auto-Safe",
+            "Let the output preamp follow the peak automatically",
+        )),
         &headroom.auto_safe_switch,
         &mut labels,
     );
-    let smooth_item = control(
-        "Smooth",
-        "Dragging one band drags its neighbours so the curve stays smooth",
-        &headroom.smooth_switch,
-        &mut labels,
-    );
-    let smooth_width_item = control(
-        "Width",
-        "How many bands move when you drag one",
-        &headroom.smooth_width_scale,
-        &mut labels,
-    );
-    let preamp_item = control(
-        "Preamp",
-        "Output preamp trim (dB)",
+    // One cell for Smooth: the switch and its width spin live inside the
+    // menu popover, so the row spends a single cell on them.
+    let smooth_item = fixed_cell(CELL_W_SMOOTH, None, &headroom.smooth_menu, &mut labels);
+    let preamp_item = fixed_cell(
+        CELL_W_PREAMP,
+        Some(("Preamp", "Output preamp trim (dB)")),
         &headroom.preamp_scale,
         &mut labels,
     );
 
     row.append(&auto_safe_item);
     row.append(&smooth_item);
-    // Only meaningful while Smooth is on; hidden otherwise (see below).
-    row.append(&smooth_width_item);
-    // Hidden while Auto-Safe owns the preamp.
     row.append(&preamp_item);
 
-    // Status LED: 18px instead of the old ~90px bar meter, which was what
-    // forced the row onto a second line with every switch active.
-    row.append(&headroom.led_area);
-
+    // Status cell: LED + numeric peak, grouped so they never separate on wrap.
+    let status_cell = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+    status_cell.set_size_request(CELL_W_STATUS, -1);
+    status_cell.set_halign(gtk4::Align::Start);
+    status_cell.set_valign(gtk4::Align::Center);
+    status_cell.append(&headroom.led_area);
     headroom.peak_label.set_valign(gtk4::Align::Center);
-    row.append(&headroom.peak_label);
+    status_cell.append(&headroom.peak_label);
+    row.append(&status_cell);
 
     headroom.set_safe_button.set_valign(gtk4::Align::Center);
-    row.append(&headroom.set_safe_button);
+    let set_safe_cell = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+    set_safe_cell.set_size_request(CELL_W_SET_SAFE, -1);
+    set_safe_cell.set_halign(gtk4::Align::Start);
+    set_safe_cell.set_valign(gtk4::Align::Center);
+    set_safe_cell.append(&headroom.set_safe_button);
+    row.append(&set_safe_cell);
 
-    // --- visibility rules (self-contained) -------------------------------
-    // Width only applies while Smooth is on; the preamp control is hidden
-    // while Auto-Safe owns it, rather than sitting there greyed out.
+    // The preamp control is hidden while Auto-Safe owns it. The CELL stays
+    // its fixed width, so nothing shifts.
     {
-        let width_item = smooth_width_item.clone();
-        headroom.smooth_switch.connect_state_set(move |_sw, on| {
-            width_item.set_visible(on);
-            glib::Propagation::Proceed
-        });
-    }
-    {
-        let preamp_item = preamp_item.clone();
+        let preamp = headroom.preamp_scale.clone();
         headroom.auto_safe_switch.connect_state_set(move |_sw, on| {
-            preamp_item.set_visible(!on);
+            preamp.set_visible(!on);
             glib::Propagation::Proceed
         });
     }
-    smooth_width_item.set_visible(headroom.smooth.get());
-    preamp_item.set_visible(!headroom.auto_safe.get());
+    preamp_item.set_visible(true);
+    headroom.preamp_scale.set_visible(!headroom.auto_safe.get());
 
     // Drop the captions when the row gets tight. Every control carries its
     // own tooltip, so the names are still reachable.
     {
         let labels: Rc<Vec<gtk4::Label>> = Rc::new(labels);
-        // Guard so the visibility change we trigger does not re-enter this
-        // handler and thrash the layout.
         let current = Rc::new(std::cell::Cell::new(false));
         row.connect_notify_local(Some("width"), move |r, _| {
             let compact = r.width() > 0 && r.width() < OUTPUT_ROW_COMPACT_WIDTH;
@@ -191,22 +189,28 @@ fn build_output_control_row(utility: &UtilityPane) -> adw::WrapBox {
     row
 }
 
-/// A captioned control in the output row. The tooltip is set on the whole
-/// item so it still identifies the control once the caption is dropped.
-fn control(
-    caption: &str,
-    tooltip: &str,
+/// A fixed-width cell in the output row. The width is reserved whether or
+/// not the caption is showing and whether or not the inner control is
+/// visible, which is what keeps the row from reflowing.
+fn fixed_cell(
+    width: i32,
+    caption: Option<(&str, &str)>,
     widget: &impl IsA<gtk4::Widget>,
     labels: &mut Vec<gtk4::Label>,
 ) -> gtk4::Box {
     let box_ = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
-    box_.set_tooltip_text(Some(tooltip));
-    let label = gtk4::Label::new(Some(caption));
-    label.set_valign(gtk4::Align::Center);
-    label.set_css_classes(&["metric-title"]);
-    box_.append(&label);
+    box_.set_size_request(width, -1);
+    box_.set_halign(gtk4::Align::Start);
+    box_.set_valign(gtk4::Align::Center);
+    if let Some((text, tooltip)) = caption {
+        box_.set_tooltip_text(Some(tooltip));
+        let label = gtk4::Label::new(Some(text));
+        label.set_valign(gtk4::Align::Center);
+        label.set_css_classes(&["metric-title"]);
+        box_.append(&label);
+        labels.push(label);
+    }
     box_.append(widget);
-    labels.push(label);
     box_
 }
 
