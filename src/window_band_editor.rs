@@ -293,6 +293,16 @@ impl BandEditor {
         *self.updating.borrow_mut() = false;
     }
 
+    /// Enable/disable the filter-type and Q controls.
+    ///
+    /// The Smooth override pins both (type = internal `Sin`, Q =
+    /// `SMOOTH_BELL_Q`), so they are greyed out while it is active and
+    /// restored when it is turned off.
+    pub fn set_type_and_q_enabled(&self, enabled: bool) {
+        self.type_combo.set_sensitive(enabled);
+        self.q_spin.set_sensitive(enabled);
+    }
+
     fn set_controls_sensitive(&self, sensitive: bool) {
         self.type_combo.set_sensitive(sensitive);
         self.frequency_spin.set_sensitive(sensitive);

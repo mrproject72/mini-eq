@@ -128,6 +128,18 @@ pub enum FilterType {
     Bandpass = 9,
     LadderPass = 10,
     LadderRej = 11,
+    /// Internal-only "Sin" smooth bell used by the Smooth override.
+    ///
+    /// NOT part of `SELECTABLE_FILTER_TYPES`: the user never picks it from
+    /// the type dropdown. While the Smooth switch is on it REPLACES each
+    /// band's own type (and pins Q at `SMOOTH_BELL_Q`), and the band's real
+    /// type/Q are left untouched so they come back when Smooth is turned off.
+    ///
+    /// Acoustically it is a plain peaking bell; the smoothness comes entirely
+    /// from the wide Q. Measured waviness of a coupled multi-band stack:
+    ///   Q 1.50 (default bell) -> 2.39 dB   (visible scalloping / "waves")
+    ///   Q 0.55 (Sin)          -> 1.14 dB   (ideal Gaussian bump ~1.08 dB)
+    Sin = 12,
 }
 
 impl FilterType {
@@ -145,6 +157,7 @@ impl FilterType {
             "Bandpass" => Some(Self::Bandpass),
             "Ladder-pass" => Some(Self::LadderPass),
             "Ladder-rej" => Some(Self::LadderRej),
+            "Sin" => Some(Self::Sin),
             _ => None,
         }
     }
@@ -163,6 +176,7 @@ impl FilterType {
             Self::Bandpass => "Bandpass",
             Self::LadderPass => "Ladder-pass",
             Self::LadderRej => "Ladder-rej",
+            Self::Sin => "Sin",
         }
     }
 
@@ -172,9 +186,12 @@ impl FilterType {
     /// fall back to `bq_peaking` and are bypassed via the mixer wet/dry gain.
     pub fn native_label(&self) -> &'static str {
         match self {
-            Self::Off | Self::Bell | Self::Resonance | Self::LadderPass | Self::LadderRej => {
-                "bq_peaking"
-            }
+            Self::Off
+            | Self::Bell
+            | Self::Sin
+            | Self::Resonance
+            | Self::LadderPass
+            | Self::LadderRej => "bq_peaking",
             Self::HiPass => "bq_highpass",
             Self::HiShelf => "bq_highshelf",
             Self::LoPass => "bq_lowpass",
@@ -193,6 +210,7 @@ impl FilterType {
             self,
             Self::Off
                 | Self::Bell
+                | Self::Sin
                 | Self::HiPass
                 | Self::HiShelf
                 | Self::LoPass
@@ -233,7 +251,7 @@ pub const EQ_Q_MIN: f64 = 0.18248;
 pub const EQ_Q_MAX: f64 = 6.0;
 /// Upstream `DEFAULT_BAND_Q = 1.0 / math.sqrt(2.0)`.
 pub const DEFAULT_BAND_Q: f64 = std::f64::consts::FRAC_1_SQRT_2;
-pub const EQ_PREAMP_MIN_DB: f64 = -24.0;
+pub const EQ_PREAMP_MIN_DB: f64 = -36.0;
 pub const EQ_PREAMP_MAX_DB: f64 = 6.0;
 
 // ── Biquad Coefficients ──────────────────────────────────────────────────────
@@ -371,7 +389,9 @@ pub fn band_biquad_coefficients(
     let alpha = sin_omega / (2.0 * q);
 
     let (b0, b1, b2, a0, a1, a2) = match band.filter_type {
-        FilterType::Bell => {
+        // `Sin` is the Smooth override: same peaking math as Bell, the
+        // smoothness comes from the wide `SMOOTH_BELL_Q` it is given.
+        FilterType::Bell | FilterType::Sin => {
             let b0 = 1.0 + alpha * a;
             let b1 = -2.0 * cos_omega;
             let b2 = 1.0 - alpha * a;
@@ -505,6 +525,7 @@ impl FilterType {
             self,
             FilterType::Off
                 | FilterType::Bell
+                | FilterType::Sin
                 | FilterType::HiPass
                 | FilterType::HiShelf
                 | FilterType::LoPass
@@ -672,6 +693,292 @@ pub fn estimate_response_peak_db(bands: &[EqBand], preamp_db: f64, sample_rate: 
         .into_iter()
         .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
         .unwrap_or(preamp_db)
+}
+
+/// Smooth curve width, expressed as a **multiple of band spacing**.
+///
+/// Why relative: the smoothness of a summed multi-band curve is governed by
+/// how well each bell bridges the gap to its neighbours. Measured against
+/// the real band layout (10 log-spaced bands, spacing 0.997 oct), with a
+/// coupled 5-band bump:
+///
+/// | width (oct) | W/spacing | local extrema |
+/// |---|---|---|
+/// | 0.50 | 0.50 | **11** — deep troughs between bands |
+/// | 0.75 | 0.75 | **11** |
+/// | 0.90 | 0.90 | **11** |
+/// | 1.10 | 1.10 | 3 |
+/// | 1.30 | 1.30 | **1** — smooth |
+/// Smooth **spread** limits, in **bands** (the Gaussian kernel's sigma).
+///
+/// This is what the Width slider actually controls: how many neighbouring
+/// bands move when you drag one. Verified on the stock 10-band layout with
+/// a +6 dB drag on band 3 (drop threshold 10%, bell Q floored at the
+/// bridging width):
+///
+/// | sigma | bands moved | extrema |
+/// |---|---|---|
+/// | 0.45 | **1** (dragged band only) | 1 |
+/// | 0.80 | 3 | 1 |
+/// | 1.00 | 5 | 1 |
+/// | 1.60 | 6 | 1 |
+/// | 3.00 | 9 | 1 |
+pub const SMOOTH_SPREAD_MIN_BANDS: f64 = 0.45;
+pub const SMOOTH_SPREAD_MAX_BANDS: f64 = 3.0;
+/// Default: 3 bands participate (dragged band + immediate neighbours).
+/// Chosen deliberately small — the user wants involvement restricted.
+pub const SMOOTH_SPREAD_DEFAULT_BANDS: f64 = 0.8;
+
+/// Minimum bell width, in octaves, needed to bridge adjacent bands.
+///
+/// Below this the bells underlap and the curve breaks into separate bumps
+/// with U-shaped troughs between them. The bell Q is floored here so that
+/// a narrow *spread* still produces a rounded bump rather than a spike
+/// with valleys.
+pub const SMOOTH_BRIDGE_WIDTH_OCT: f64 = 1.3;
+
+/// Bell Q for a given spread.
+///
+/// Wide spreads need wide bells to bridge the participating region; a
+/// narrow spread still needs at least the bridging width. Hence the max.
+pub fn smooth_bell_q(spread_bands: f64, spacing_oct: f64) -> f64 {
+    let sp = if spacing_oct.is_finite() && spacing_oct > 0.0 {
+        spacing_oct
+    } else {
+        1.0
+    };
+    let sigma = if spread_bands.is_finite() {
+        spread_bands.clamp(SMOOTH_SPREAD_MIN_BANDS, SMOOTH_SPREAD_MAX_BANDS)
+    } else {
+        SMOOTH_SPREAD_DEFAULT_BANDS
+    };
+    q_for_smooth_width((sigma * sp).max(SMOOTH_BRIDGE_WIDTH_OCT))
+}
+
+/// Spread slider bounds for a given band set (min, max, default) in bands.
+pub fn smooth_spread_bounds_bands() -> (f64, f64, f64) {
+    (
+        SMOOTH_SPREAD_MIN_BANDS,
+        SMOOTH_SPREAD_MAX_BANDS,
+        SMOOTH_SPREAD_DEFAULT_BANDS,
+    )
+}
+
+/// Median spacing between consecutive active (non-`Off`) band frequencies,/// in octaves. Falls back to the 10-band default layout if fewer than two
+/// bands are active.
+pub fn band_spacing_oct(bands: &[EqBand]) -> f64 {
+    let mut freqs: Vec<f64> = bands
+        .iter()
+        .filter(|b| b.filter_type != FilterType::Off && b.frequency > 0.0)
+        .map(|b| b.frequency)
+        .collect();
+    freqs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    if freqs.len() < 2 {
+        // Mirror compute_log_spaced_band_defaults for the default layout.
+        return 1.0;
+    }
+    let mut ratios: Vec<f64> = freqs
+        .windows(2)
+        .map(|w| (w[1] / w[0]).log2())
+        .filter(|r| r.is_finite() && *r > 0.0)
+        .collect();
+    if ratios.is_empty() {
+        return 1.0;
+    }
+    ratios.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    ratios[ratios.len() / 2]
+}
+
+/// Smooth curve width limits, in **octaves of half-boost bandwidth**.
+///
+/// Half-boost width is the span over which the bell sits at least half its
+/// peak boost. Measured identical at +3 / +6 / +12 / +18 dB, i.e. it is
+/// *gain-independent* — which makes octaves an honest, intuitive control
+/// instead of raw Q (where smaller means wider, and the number means
+/// nothing to the ear).
+pub const SMOOTH_WIDTH_MIN_OCT: f64 = 0.5;
+pub const SMOOTH_WIDTH_MAX_OCT: f64 = 4.0;
+
+/// `(half-boost width in octaves, Q)` for a peaking bell.
+///
+/// Generated by numerically inverting the bell's half-boost bandwidth; the
+/// relationship is not a simple inverse so a table is used.
+const SMOOTH_WIDTH_TABLE: [(f64, f64); 15] = [
+    (0.50, 2.850680),
+    (0.75, 1.892359),
+    (1.00, 1.406766),
+    (1.25, 1.114155),
+    (1.50, 0.914949),
+    (1.75, 0.772338),
+    (2.00, 0.663084),
+    (2.25, 0.577069),
+    (2.50, 0.507160),
+    (2.75, 0.449840),
+    (3.00, 0.400695),
+    (3.25, 0.359083),
+    (3.50, 0.322802),
+    (3.75, 0.291155),
+    (4.00, 0.263047),
+];
+
+/// Map a smooth width in octaves to the bell Q that produces it.
+/// Linear interpolation between table points, clamped to the table range.
+pub fn q_for_smooth_width(width_oct: f64) -> f64 {
+    if !width_oct.is_finite() {
+        return q_for_smooth_width(SMOOTH_BRIDGE_WIDTH_OCT);
+    }
+    let w = width_oct.clamp(SMOOTH_WIDTH_MIN_OCT, SMOOTH_WIDTH_MAX_OCT);
+    for pair in SMOOTH_WIDTH_TABLE.windows(2) {
+        let (w0, q0) = pair[0];
+        let (w1, q1) = pair[1];
+        if w <= w1 {
+            let t = (w - w0) / (w1 - w0);
+            return q0 + (q1 - q0) * t;
+        }
+    }
+    SMOOTH_WIDTH_TABLE[SMOOTH_WIDTH_TABLE.len() - 1].1
+}
+
+/// Q at the default smooth width. Kept as a named reference to the
+/// measured sweet spot (waviness ~1.14 dB vs 2.39 dB for the Q 1.5
+/// default bell, and ~1.08 dB for an ideal Gaussian bump).
+pub const SMOOTH_BELL_Q: f64 = 0.55;
+
+/// Apply the Smooth override to a band at a given bell Q.
+pub fn smooth_effective_band(band: &EqBand, q: f64) -> EqBand {
+    if band.filter_type == FilterType::Off {
+        return band.clone();
+    }
+    let mut b = band.clone();
+    b.filter_type = FilterType::Sin;
+    b.q = q;
+    b
+}
+
+/// Neighbour-coupling kernel for smooth (spline-like) band editing.
+///
+/// A lone Bell raises an isolated hump: the neighbouring bands stay put and
+/// the curve looks like a bump sitting on a flat line. With coupling, moving
+/// one band drags its neighbours by a decaying fraction of the same delta,
+/// so the summed response is one smooth, broad curve that involves the
+/// adjacent bands on both sides.
+///
+/// Geometric decay: half the influence per step away from the dragged band.
+pub const SMOOTH_NEIGHBOR_WEIGHTS: [(i64, f64); 4] = [(-2, 0.25), (-1, 0.5), (1, 0.5), (2, 0.25)];
+
+/// Gaussian neighbour-coupling kernel: the delta to apply to every other
+/// band when `center` moves by `delta_db`.
+///
+/// Weight falls off as `exp(-k^2 / 2 sigma^2)` in band-index distance, so
+/// a small sigma keeps the edit local (3-5 bands) and a large sigma
+/// spreads it across most of the spectrum. Tails below 2% are dropped so
+/// far-away bands are not touched at all.
+pub fn smooth_kernel_weights(
+    center: usize,
+    delta_db: f64,
+    sigma: f64,
+    band_count: usize,
+) -> Vec<(usize, f64)> {
+    if band_count == 0 || !delta_db.is_finite() || !sigma.is_finite() || sigma <= 0.0 {
+        return Vec::new();
+    }
+    let two_sigma_sq = 2.0 * sigma * sigma;
+    (0..band_count)
+        .filter_map(|i| {
+            if i == center {
+                return None;
+            }
+            let k = (i as i64 - center as i64) as f64;
+            let exponent = -(k * k) / two_sigma_sq;
+            if exponent < -2.3 {
+                return None; // weight < ~10%: don't drag far bands along
+            }
+            Some((i, delta_db * exponent.exp()))
+        })
+        .collect()
+}
+
+/// Weighted neighbour deltas for a `delta_db` change on `index`, clamped to
+/// the existing band range. Off-range neighbours are dropped (no wrapping).
+pub fn smooth_neighbor_deltas(index: usize, delta_db: f64, band_count: usize) -> Vec<(usize, f64)> {
+    SMOOTH_NEIGHBOR_WEIGHTS
+        .iter()
+        .filter_map(|(offset, weight)| {
+            let other = index as i64 + offset;
+            if other >= 0 && (other as usize) < band_count {
+                Some((other as usize, delta_db * weight))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Highest raw (preamp = 0) curve peak the interactive gain controls may
+/// create.
+///
+/// Budget rule: the preamp floor is Auto-Safe's only lever, so the floor must
+/// be able to pull a capped curve down to the target:
+///
+/// `EQ_PREAMP_MIN_DB <= AUTO_SAFE_TARGET_DBFS - MAX_SAFE_RAW_PEAK_DB`
+///
+/// With a -36 dB floor and a -1 dBFS target we may allow +30 dB of raw peak
+/// and still have 5 dB of slack for estimation/rounding error. A single band
+/// is effectively unrestricted (a max-gain shelf tops out near +23.5 dB);
+/// the cap only bites when several boosts stack in the same region, and it is
+/// deliberately loose enough that realistic multi-band shaping — e.g. a
+/// +12 dB bell plus two shelves — is not refused at the fader.
+pub const MAX_SAFE_RAW_PEAK_DB: f64 = 30.0;
+
+/// Clamp a proposed gain for `band_index` so the curve's raw peak stays at
+/// or below the effective cap. The effective cap *observes the current
+/// line*: it is `max(max_raw_peak_db, peak_of_current_curve)`. An edit can
+/// therefore never raise the peak above where it already sits (a preset
+/// that loads hot can be tweaked but not made hotter), while normal use is
+/// held to the safe cap that Auto-Safe can always absorb.
+///
+/// The response peak is monotonic in a band's dB gain (more gain ⇒ more
+/// boost), so the largest admissible gain is found by bisection.
+/// Semantics:
+/// - cuts (gain ≤ 0) are always allowed — they can only reduce the peak;
+/// - a boost that already fits under the effective cap passes through;
+/// - otherwise the gain is bisected down to the cap.
+pub fn clamp_gain_for_peak(
+    bands: &[EqBand],
+    band_index: usize,
+    gain_db: f64,
+    sample_rate: f64,
+    max_raw_peak_db: f64,
+) -> f64 {
+    let proposed = gain_db.clamp(EQ_GAIN_MIN_DB, EQ_GAIN_MAX_DB);
+    if proposed <= 0.0 {
+        return proposed;
+    }
+    let Some(slot) = bands.iter().position(|b| b.index == band_index) else {
+        return proposed;
+    };
+    // Observe the current line before the edit: never clamp below the
+    // status quo, never allow a peak above max(cap, status quo).
+    let current_peak = estimate_response_peak_db(bands, 0.0, sample_rate);
+    let cap = max_raw_peak_db.max(current_peak);
+    let mut trial: Vec<EqBand> = bands.to_vec();
+    trial[slot].gain_db = proposed;
+    if estimate_response_peak_db(&trial, 0.0, sample_rate) <= cap {
+        return proposed;
+    }
+    // Bisect [0, proposed] for the largest gain whose peak fits. 14 steps
+    // resolve a 40 dB range to ~0.002 dB.
+    let (mut lo, mut hi) = (0.0, proposed);
+    for _ in 0..14 {
+        let mid = (lo + hi) / 2.0;
+        trial[slot].gain_db = mid;
+        if estimate_response_peak_db(&trial, 0.0, sample_rate) <= cap {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    (lo * 10.0).floor() / 10.0
 }
 
 // ── Default Band Presets ─────────────────────────────────────────────────────
@@ -1184,6 +1491,558 @@ pub fn clear_output_preset_link(keys: &[String]) -> anyhow::Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Count local extrema in a response — the direct measure of "waves".
+    fn count_extrema(vals: &[f64]) -> usize {
+        let mut n = 0usize;
+        let mut prev = 0.0f64;
+        for i in 1..vals.len() {
+            let d = vals[i] - vals[i - 1];
+            if d.abs() < 1e-4 {
+                continue;
+            }
+            if prev != 0.0 && d * prev < 0.0 {
+                n += 1;
+            }
+            prev = d;
+        }
+        n
+    }
+
+    #[test]
+    fn test_band_spacing_and_width_bounds() {
+        let bands = default_bands();
+        let sp = band_spacing_oct(&bands);
+        // Stock layout is 10 log-spaced bands ~= 1 octave apart.
+        assert!(
+            (sp - 1.0).abs() < 0.05,
+            "stock spacing should be ~1.0 oct, got {sp:.3}"
+        );
+
+        let (lo, hi, def) = smooth_spread_bounds_bands();
+        assert!(lo > 0.4 && lo < 0.5, "lower bound {lo:.3}");
+        assert!(hi > 2.9 && hi < 3.1, "upper bound {hi:.3}");
+        assert!(def > 0.75 && def < 0.85, "default {def:.3}");
+        assert!(lo < def && def < hi);
+    }
+
+    #[test]
+    fn test_smooth_kernel_weights_gaussian_falloff() {
+        // Narrow sigma stays local; wide sigma reaches far.
+        let narrow = smooth_kernel_weights(4, 6.0, 1.0, 10);
+        let wide = smooth_kernel_weights(4, 6.0, 3.0, 10);
+        assert!(
+            wide.len() > narrow.len(),
+            "wide sigma must involve more bands: {} vs {}",
+            wide.len(),
+            narrow.len()
+        );
+        // The dragged band itself is never in the kernel.
+        assert!(!narrow.iter().any(|(i, _)| *i == 4));
+        // Symmetric about the centre, and monotone with distance.
+        let center = 4usize;
+        for (i, w) in &wide {
+            let mirror = center as i64 - (*i as i64 - center as i64);
+            if mirror >= 0 && (mirror as usize) < 10 {
+                if let Some((_, mw)) = wide.iter().find(|(j, _)| *j as i64 == mirror) {
+                    assert!((w - mw).abs() < 1e-12, "kernel must be symmetric at {i}");
+                }
+            }
+            let k = *i as i64 - center as i64;
+            let expected = 6.0 * (-(k * k) as f64 / (2.0 * 3.0 * 3.0)).exp();
+            assert!(
+                (w - expected).abs() < 1e-9,
+                "kernel value mismatch at k={k}"
+            );
+        }
+        // Degenerate inputs produce no coupling rather than NaN/panic.
+        assert!(smooth_kernel_weights(0, 6.0, 0.0, 10).is_empty());
+        assert!(smooth_kernel_weights(0, f64::NAN, 1.0, 10).is_empty());
+        assert!(smooth_kernel_weights(0, 6.0, 1.0, 0).is_empty());
+    }
+
+    #[test]
+    fn test_min_spread_moves_only_the_dragged_band() {
+        // The user's explicit requirement: at minimum spread, dragging one
+        // band must move NOTHING else.
+        let k = smooth_kernel_weights(4, 6.0, SMOOTH_SPREAD_MIN_BANDS, 10);
+        assert!(
+            k.is_empty(),
+            "min spread must couple to zero neighbours, got {:?}",
+            k
+        );
+    }
+
+    #[test]
+    fn test_spread_scales_participating_bands_without_waves() {
+        // The user-visible contract: turning the knob changes HOW MANY bands
+        // move, and never introduces U-shaped troughs.
+        let bands = default_bands();
+        let spacing = band_spacing_oct(&bands);
+        let freqs = stepped_response_frequencies(SAMPLE_RATE, 1501);
+
+        let simulate = |sigma: f64| -> (usize, usize, f64) {
+            let q = smooth_bell_q(sigma, spacing);
+            let center = 2usize;
+            let mut bs = default_bands();
+            bs[center].filter_type = FilterType::Sin;
+            bs[center].gain_db = 6.0;
+            bs[center].q = q;
+            let mut involved = 1usize;
+            for (i, w) in smooth_kernel_weights(center, 6.0, sigma, bs.len()) {
+                bs[i].filter_type = FilterType::Sin;
+                bs[i].gain_db = w;
+                bs[i].q = q;
+                involved += 1;
+            }
+            let resp = total_response_db_at_frequencies(&bs, 0.0, SAMPLE_RATE, &freqs);
+            let peak_hz = freqs[resp
+                .iter()
+                .enumerate()
+                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+                .unwrap()
+                .0];
+            (involved, count_extrema(&resp), peak_hz)
+        };
+
+        let (inv_lo, ex_lo, peak_lo) = simulate(SMOOTH_SPREAD_MIN_BANDS);
+        let (inv_def, ex_def, _) = simulate(SMOOTH_SPREAD_DEFAULT_BANDS);
+        let (inv_hi, ex_hi, _) = simulate(SMOOTH_SPREAD_MAX_BANDS);
+
+        // Minimum must be exactly one band.
+        assert_eq!(inv_lo, 1, "min spread must involve only the dragged band");
+        // And the knob must still scale upward.
+        assert!(
+            inv_lo < inv_def && inv_def < inv_hi,
+            "participating bands must grow with spread: {inv_lo} < {inv_def} < {inv_hi}"
+        );
+
+        // No setting may produce waves.
+        for (label, e, sig) in [
+            ("min", ex_lo, SMOOTH_SPREAD_MIN_BANDS),
+            ("default", ex_def, SMOOTH_SPREAD_DEFAULT_BANDS),
+            ("max", ex_hi, SMOOTH_SPREAD_MAX_BANDS),
+        ] {
+            assert!(
+                e <= 2,
+                "{label} spread {sig:.2} gave {e} extrema (want <= 2)"
+            );
+        }
+
+        // At minimum spread the peak must sit on the dragged band's own
+        // frequency (single bell => peak at f0), within grid resolution.
+        let f0 = default_bands()[2].frequency;
+        assert!(
+            (peak_lo - f0).abs() / f0 < 0.01,
+            "peak should be at the band frequency {f0:.1} Hz, got {peak_lo:.1} Hz"
+        );
+    }
+
+    #[test]
+    fn test_q_for_smooth_width() {
+        // The bridging width is the floor for the bell Q.
+        let q = q_for_smooth_width(SMOOTH_BRIDGE_WIDTH_OCT);
+        assert!(
+            q > 1.0 && q < 1.15,
+            "bridge width should give Q ~1.07, got {q:.4}"
+        );
+
+        // Wider curve => lower Q, strictly monotonic across the range.
+        let mut prev = f64::INFINITY;
+        let mut w = SMOOTH_WIDTH_MIN_OCT;
+        while w <= SMOOTH_WIDTH_MAX_OCT + 1e-9 {
+            let q = q_for_smooth_width(w);
+            assert!(q < prev, "width {w} must give a lower Q than the previous");
+            prev = q;
+            w += 0.1;
+        }
+
+        // Out-of-range widths clamp instead of extrapolating.
+        assert_eq!(
+            q_for_smooth_width(0.0),
+            q_for_smooth_width(SMOOTH_WIDTH_MIN_OCT)
+        );
+        assert_eq!(
+            q_for_smooth_width(99.0),
+            q_for_smooth_width(SMOOTH_WIDTH_MAX_OCT)
+        );
+
+        // Non-finite input falls back to the default, never NaN.
+        let d = q_for_smooth_width(f64::NAN);
+        assert!(d.is_finite());
+        assert!((d - q_for_smooth_width(SMOOTH_BRIDGE_WIDTH_OCT)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_smooth_effective_band_override() {
+        let mut b = default_bands();
+        b[3].filter_type = FilterType::HiShelf;
+        b[3].q = 4.0;
+
+        let e = smooth_effective_band(&b[3], SMOOTH_BELL_Q);
+        assert_eq!(e.filter_type, FilterType::Sin);
+        // The override must produce a Q in the blended region for the
+        // stock layout, and it must come from the width mapping.
+        assert!(
+            (e.q - SMOOTH_BELL_Q).abs() < 1e-12,
+            "Q must pass through unchanged"
+        );
+        assert!((e.q - SMOOTH_BELL_Q).abs() < 1e-12);
+        // The original is untouched, so switching Smooth off restores it.
+        assert_eq!(b[3].filter_type, FilterType::HiShelf);
+        assert!((b[3].q - 4.0).abs() < 1e-12);
+
+        // An `Off` band must stay `Off` — Smooth cannot switch a bypassed
+        // band on.
+        b[5].filter_type = FilterType::Off;
+        assert_eq!(
+            smooth_effective_band(&b[5], SMOOTH_BELL_Q).filter_type,
+            FilterType::Off
+        );
+
+        // `Sin` is the same peaking math as `Bell`: at equal Q the
+        // coefficients are identical. The smoothness is purely the wide Q.
+        let mut bell = b[3].clone();
+        bell.filter_type = FilterType::Bell;
+        bell.q = SMOOTH_BELL_Q;
+        let mut sin = b[3].clone();
+        sin.filter_type = FilterType::Sin;
+        sin.q = SMOOTH_BELL_Q;
+        let bc = band_biquad_coefficients(&bell, SAMPLE_RATE, false);
+        let sc = band_biquad_coefficients(&sin, SAMPLE_RATE, false);
+        for (x, y) in bc.as_array().iter().zip(sc.as_array().iter()) {
+            assert!((x - y).abs() < 1e-12, "Sin must match Bell at equal Q");
+        }
+    }
+
+    #[test]
+    fn test_sin_is_wider_and_smoother_than_default_bell() {
+        // Coupled gain profile: band 5 +6, +-1 +3, +-2 +1.5.
+        let prof: [(usize, f64); 5] = [(5, 6.0), (4, 3.0), (6, 3.0), (3, 1.5), (7, 1.5)];
+        let freqs = stepped_response_frequencies(SAMPLE_RATE, 801);
+
+        fn waviness(vals: &[f64]) -> f64 {
+            let w = 80usize;
+            let dev: Vec<f64> = (0..vals.len())
+                .map(|i| {
+                    let a = i.saturating_sub(w);
+                    let b = (i + w + 1).min(vals.len());
+                    let mean = vals[a..b].iter().sum::<f64>() / (b - a) as f64;
+                    vals[i] - mean
+                })
+                .collect();
+            let mx = dev.iter().fold(f64::NEG_INFINITY, |a, v| a.max(*v));
+            let mn = dev.iter().fold(f64::INFINITY, |a, v| a.min(*v));
+            mx - mn
+        }
+
+        let sum_with = |q: f64| -> Vec<f64> {
+            let mut bands = default_bands();
+            for (i, g) in prof {
+                bands[i].filter_type = FilterType::Bell;
+                bands[i].gain_db = g;
+                bands[i].q = q;
+            }
+            total_response_db_at_frequencies(&bands, 0.0, SAMPLE_RATE, &freqs)
+        };
+
+        let default_q = 1.5;
+        let w_default = waviness(&sum_with(default_q));
+        let w_sin = waviness(&sum_with(SMOOTH_BELL_Q));
+
+        assert!(
+            w_sin < w_default,
+            "Sin must be smoother: sin {w_sin:.2} vs default {w_default:.2}"
+        );
+        // And it should land near the ideal-Gaussian regime (~1.1 dB).
+        assert!(w_sin < 1.5, "Sin waviness {w_sin:.2} should be ~1.1 dB");
+    }
+
+    #[test]
+    fn test_smooth_neighbor_deltas() {
+        // Middle band: both sides coupled, symmetric, geometric decay.
+        let d = smooth_neighbor_deltas(5, 8.0, 10);
+        assert_eq!(d.len(), 4);
+        assert_eq!(d, vec![(3, 2.0), (4, 4.0), (6, 4.0), (7, 2.0)]);
+
+        // Symmetry: a +delta and a -delta couple the same neighbours.
+        let up = smooth_neighbor_deltas(5, 6.0, 10);
+        let down = smooth_neighbor_deltas(5, -6.0, 10);
+        assert_eq!(up.len(), down.len());
+        for ((iu, wu), (id, wd)) in up.iter().zip(down.iter()) {
+            assert_eq!(iu, id);
+            assert!((wu + wd).abs() < 1e-12);
+        }
+
+        // Edges drop out-of-range neighbours, never wrap around.
+        let first = smooth_neighbor_deltas(0, 8.0, 10);
+        assert_eq!(first, vec![(1, 4.0), (2, 2.0)]);
+        let last = smooth_neighbor_deltas(9, 8.0, 10);
+        assert_eq!(last, vec![(7, 2.0), (8, 4.0)]);
+
+        // A single-band row has nothing to couple.
+        assert!(smooth_neighbor_deltas(0, 8.0, 1).is_empty());
+
+        // Zero delta couples nothing.
+        assert!(
+            smooth_neighbor_deltas(5, 0.0, 10)
+                .iter()
+                .all(|(_, w)| *w == 0.0)
+        );
+    }
+
+    #[test]
+    fn test_smooth_coupling_shape_and_cap() {
+        // Mirrors the coupling loop in `window::gain_request`: apply the
+        // dragged band's post-cap delta to neighbours, re-clamping each
+        // neighbour against a fresh snapshot.
+        fn coupled_drag(bands: &mut [EqBand], dragged: usize, want: f64) {
+            let delta_cap =
+                clamp_gain_for_peak(bands, dragged, want, SAMPLE_RATE, MAX_SAFE_RAW_PEAK_DB);
+            bands[dragged].gain_db = delta_cap;
+            let delta = delta_cap;
+            for (other, weighted) in smooth_neighbor_deltas(dragged, delta, bands.len()) {
+                let cur = bands.to_vec();
+                let w = cur[other].gain_db + weighted;
+                bands[other].gain_db =
+                    clamp_gain_for_peak(&cur, other, w, SAMPLE_RATE, MAX_SAFE_RAW_PEAK_DB);
+            }
+        }
+
+        let mut b = default_bands();
+        for band in b.iter_mut() {
+            band.filter_type = FilterType::Bell;
+        }
+        coupled_drag(&mut b, 5, 6.0);
+
+        // Neighbours moved by the expected decaying fractions.
+        assert!((b[5].gain_db - 6.0).abs() < 0.11, "self: {}", b[5].gain_db);
+        assert!((b[4].gain_db - 3.0).abs() < 0.11, "n-1: {}", b[4].gain_db);
+        assert!((b[6].gain_db - 3.0).abs() < 0.11, "n+1: {}", b[6].gain_db);
+        assert!((b[3].gain_db - 1.5).abs() < 0.11, "n-2: {}", b[3].gain_db);
+        assert!((b[7].gain_db - 1.5).abs() < 0.11, "n+2: {}", b[7].gain_db);
+
+        // The gain profile is smooth: it decays monotonically away from the
+        // dragged band on both sides (no isolated hump, no rebound).
+        for i in [3usize, 4] {
+            assert!(
+                b[i].gain_db <= b[i + 1].gain_db + 1e-9,
+                "left side not monotonic"
+            );
+        }
+        for i in [6usize, 7] {
+            assert!(
+                b[i].gain_db <= b[i - 1].gain_db + 1e-9,
+                "right side not monotonic"
+            );
+        }
+
+        // And the whole thing still fits the headroom budget.
+        let raw = estimate_response_peak_db(&b, 0.0, SAMPLE_RATE);
+        assert!(raw <= MAX_SAFE_RAW_PEAK_DB + 0.1, "coupled stack: {raw:.2}");
+        assert!(
+            -1.0 - raw >= EQ_PREAMP_MIN_DB,
+            "Set Safe must stay reachable: {:.1}",
+            -1.0 - raw
+        );
+    }
+
+    #[test]
+    fn test_preamp_budget_invariant() {
+        // Auto-Safe's only lever is the preamp floor, so the floor must be
+        // able to pull a capped curve down to the target. If this fails, a
+        // capped stack saturates the preamp and Set Safe stops working.
+        let required = crate::window_headroom::AUTO_SAFE_TARGET_DBFS - MAX_SAFE_RAW_PEAK_DB;
+        assert!(
+            EQ_PREAMP_MIN_DB <= required,
+            "preamp floor {EQ_PREAMP_MIN_DB:.1} must reach target {:.1} minus cap {MAX_SAFE_RAW_PEAK_DB:.1} = {required:.1}",
+            crate::window_headroom::AUTO_SAFE_TARGET_DBFS,
+        );
+    }
+
+    #[test]
+    fn test_clamp_gain_for_peak() {
+        // A single band is essentially unrestricted; a max-gain shelf
+        // overshoots to ~23.5 dB so the last ~0.5 dB is trimmed to fit the
+        // 23 dB cap (Auto-Safe can then always reach -1 dBFS).
+        let mut bands = default_bands();
+        bands[3].filter_type = FilterType::HiShelf;
+        let out = clamp_gain_for_peak(&bands, 3, 20.0, SAMPLE_RATE, MAX_SAFE_RAW_PEAK_DB);
+        assert!(
+            out > 19.0 && out <= 20.0,
+            "single shelf may lose at most ~1 dB: {out}"
+        );
+        bands[3].gain_db = out;
+        let peak = estimate_response_peak_db(&bands, 0.0, SAMPLE_RATE);
+        assert!(peak <= MAX_SAFE_RAW_PEAK_DB + 0.1, "{peak:.2}");
+        bands[3].gain_db = 0.0;
+
+        // Stacking: three shelves already near the cap; a fourth proposed at
+        // +20 must be pulled down so the raw peak stays <= 23 dB.
+        for i in 4..=6 {
+            bands[i].filter_type = FilterType::HiShelf;
+            bands[i].gain_db = 6.0;
+        }
+        let out = clamp_gain_for_peak(&bands, 7, 20.0, SAMPLE_RATE, MAX_SAFE_RAW_PEAK_DB);
+        assert!(
+            out < 20.0 && out > 0.0,
+            "stacked shelves must clamp the fourth: {out}"
+        );
+        bands[7].gain_db = out;
+        let peak = estimate_response_peak_db(&bands, 0.0, SAMPLE_RATE);
+        assert!(
+            peak <= MAX_SAFE_RAW_PEAK_DB + 0.1,
+            "peak after clamp must fit the cap, got {peak:.2}"
+        );
+
+        // A proposal that already fits is returned unchanged; cuts always pass.
+        let out = clamp_gain_for_peak(&bands, 7, 1.5, SAMPLE_RATE, MAX_SAFE_RAW_PEAK_DB);
+        assert!(
+            (out - 1.5).abs() < 1e-9,
+            "fits-through must be a no-op: {out}"
+        );
+        let out = clamp_gain_for_peak(&bands, 7, -20.0, SAMPLE_RATE, MAX_SAFE_RAW_PEAK_DB);
+        assert!((out + 20.0).abs() < 1e-9, "cuts must pass: {out}");
+
+        // Muted bands contribute nothing, so they don't restrict others.
+        let mut m = default_bands();
+        for i in 0..6 {
+            m[i].filter_type = FilterType::HiShelf;
+            m[i].gain_db = 20.0;
+            m[i].mute = true;
+        }
+        m[7].filter_type = FilterType::HiShelf;
+        let out = clamp_gain_for_peak(&m, 7, 10.0, SAMPLE_RATE, MAX_SAFE_RAW_PEAK_DB);
+        assert!(
+            (out - 10.0).abs() < 1e-9,
+            "muted stacks must not clamp: {out}"
+        );
+    }
+
+    #[test]
+    fn test_clamp_gain_for_peak_observes_current_line() {
+        // Hot preset: current curve peak well above the safe cap. The cap
+        // observes the current line, so an edit may not raise the peak above
+        // the status quo, but is not clamped to the 23 dB safe cap.
+        let mut hot = default_bands();
+        for i in 4..=7 {
+            hot[i].filter_type = FilterType::HiShelf;
+            hot[i].gain_db = 12.0;
+        }
+        let base = estimate_response_peak_db(&hot, 0.0, SAMPLE_RATE);
+        assert!(
+            base > MAX_SAFE_RAW_PEAK_DB + 20.0,
+            "preset should run hot: {base:.1}"
+        );
+
+        // Band 7 sits at 12 dB; proposing +20 would raise the peak, so it
+        // clamps back to ~its current value (never above the status quo).
+        let out = clamp_gain_for_peak(&hot, 7, 20.0, SAMPLE_RATE, MAX_SAFE_RAW_PEAK_DB);
+        assert!(
+            out > 11.0 && out <= 12.0,
+            "must not raise peak above status quo: {out}"
+        );
+
+        // A cut still passes untouched.
+        let cut = clamp_gain_for_peak(&hot, 7, -5.0, SAMPLE_RATE, MAX_SAFE_RAW_PEAK_DB);
+        assert!((cut + 5.0).abs() < 1e-9, "cuts must pass: {cut}");
+    }
+
+    #[test]
+    fn test_set_safe_can_fix_two_shelf_stack() {
+        // Regression: two Hi-Shelves driven to max stack their plateaus in the
+        // overlap region. Measured live this reached ~+59 dB raw, which needs a
+        // ~-60 dB preamp to be safe -- far below the -24 dB floor, so both
+        // Set Safe and Auto-Safe were unable to fix it.
+        let mut hot = default_bands();
+        hot[6].filter_type = FilterType::HiShelf;
+        hot[6].gain_db = 20.0;
+        hot[7].filter_type = FilterType::HiShelf;
+        hot[7].gain_db = 20.0;
+        let raw = estimate_response_peak_db(&hot, 0.0, SAMPLE_RATE);
+        assert!(raw > 30.0, "two maxed shelves must stack hot: {raw:.1}");
+
+        // Uncapped, the preamp Set Safe asks for is unreachable.
+        let needed = 0.0 - raw - 1.0;
+        assert!(
+            needed < EQ_PREAMP_MIN_DB,
+            "uncapped stack must exceed the preamp floor: {needed:.1}"
+        );
+
+        // With the cap applied the way the gain path applies it, the raw peak
+        // stays inside what the preamp floor can always absorb, so Set Safe
+        // lands on target instead of saturating.
+        let mut capped = default_bands();
+        capped[6].filter_type = FilterType::HiShelf;
+        capped[7].filter_type = FilterType::HiShelf;
+        for i in [6usize, 7] {
+            let g = clamp_gain_for_peak(&capped, i, 20.0, SAMPLE_RATE, MAX_SAFE_RAW_PEAK_DB);
+            capped[i].gain_db = g;
+        }
+        let capped_raw = estimate_response_peak_db(&capped, 0.0, SAMPLE_RATE);
+        assert!(
+            capped_raw <= MAX_SAFE_RAW_PEAK_DB + 0.1,
+            "capped stack must fit the cap: {capped_raw:.2}"
+        );
+        let needed = 0.0 - capped_raw - 1.0;
+        assert!(
+            needed >= EQ_PREAMP_MIN_DB,
+            "Set Safe must be reachable for a capped stack: {needed:.1}"
+        );
+        let after = estimate_response_peak_db(&capped, needed, SAMPLE_RATE);
+        assert!(
+            (after - (-1.0)).abs() < 0.2,
+            "Set Safe must land near the -1 dBFS target: {after:.2}"
+        );
+    }
+
+    #[test]
+    fn test_user_shelf_stack_is_not_a_dead_fader() {
+        // Acceptance test for the reported scenario: bands 7 and 8 set to
+        // Hi-shelf, then band 9 (bell) +12, then band 8 +12, then band 7 +20.
+        // With the old 23 dB cap the last step resolved to +0.0 dB — the fader
+        // refused to move at all. With the widened budget every step must yield
+        // a usable, monotonically increasing raw peak that Set Safe can absorb.
+        let mut b = default_bands();
+        b[6].filter_type = FilterType::HiShelf;
+        b[7].filter_type = FilterType::HiShelf;
+
+        let apply = |b: &mut Vec<EqBand>, i: usize, want: f64| -> f64 {
+            let got = clamp_gain_for_peak(b, i, want, SAMPLE_RATE, MAX_SAFE_RAW_PEAK_DB);
+            b[i].gain_db = got;
+            got
+        };
+
+        let g9 = apply(&mut b, 8, 12.0);
+        let raw9 = estimate_response_peak_db(&b, 0.0, SAMPLE_RATE);
+        let g8 = apply(&mut b, 7, 12.0);
+        let raw8 = estimate_response_peak_db(&b, 0.0, SAMPLE_RATE);
+        let g7 = apply(&mut b, 6, 20.0);
+        let raw7 = estimate_response_peak_db(&b, 0.0, SAMPLE_RATE);
+
+        // No step may be refused outright.
+        assert!(g9 > 0.0, "band 9 must accept its boost: {g9}");
+        assert!(g8 > 0.0, "band 8 must accept its boost: {g8}");
+        assert!(
+            g7 > 1.0,
+            "band 7 must not be a dead fader (old cap gave 0.0): {g7}"
+        );
+
+        // Each step must actually add response, not stall.
+        assert!(raw8 > raw9, "raw peak must grow: {raw9} -> {raw8}");
+        assert!(raw7 > raw8, "raw peak must grow: {raw8} -> {raw7}");
+
+        // And the result must stay inside the cap with a reachable preamp.
+        assert!(
+            raw7 <= MAX_SAFE_RAW_PEAK_DB + 0.1,
+            "stack must fit the cap: {raw7:.2}"
+        );
+        let needed = -1.0 - raw7;
+        assert!(
+            needed >= EQ_PREAMP_MIN_DB,
+            "Set Safe must be reachable: {needed:.1} vs floor {EQ_PREAMP_MIN_DB:.1}"
+        );
+    }
 
     #[test]
     fn test_estimate_response_peak_db_is_unclamped() {

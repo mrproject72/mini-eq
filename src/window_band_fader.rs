@@ -22,15 +22,10 @@ impl WindowBandFader {
         q: f64,
         filter_type: FilterType,
         enabled: bool,
+        gain_changed: Rc<dyn Fn(usize, f64) -> f64>,
         selection_changed_callback: Rc<dyn Fn(usize)>,
     ) -> Self {
-        let fader = EqBandFader::new(
-            index,
-            Box::new(move |idx, gain| {
-                let _ = (idx, gain);
-            }),
-            selection_changed_callback,
-        );
+        let fader = EqBandFader::new(index, gain_changed, selection_changed_callback);
         {
             let mut f = fader.borrow_mut();
             f.frequency = frequency;

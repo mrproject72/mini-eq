@@ -202,9 +202,10 @@ const STYLE_CSS: &str = r#"
     color: var(--text-muted);
 }
 
-/* Blinking warning on the Headroom header icon when the EQ curve peak
+/* Blinking clipping alert on the Set Safe button while the EQ curve peak
    exceeds the -1 dBFS target. Toggled by a 500 ms timer (GTK4 CSS has no
-   @keyframes); the color transition smooths each toggle into a pulse. */
+   @keyframes); the color transition smooths each toggle into a pulse.
+   Deliberately on the button that FIXES the problem, not the header icon. */
 button.headroom-warning,
 button.headroom-warning image {
     color: var(--danger-color);
@@ -214,6 +215,17 @@ button.headroom-warning {
     transition: color 250ms ease-in-out, background-color 250ms ease-in-out;
     background-color: color-mix(in srgb, var(--danger-color) 22%, transparent);
     border-color: var(--danger-color);
+}
+
+/* Main-window output control row: Auto-Safe, A/B compare, preamp, live
+   peak meter and Set Safe, between the spectrum and the fader strip. */
+.output-control-row {
+    padding: 2px 6px;
+}
+
+.output-control-row label.metric-title {
+    color: var(--text-muted);
+    font-size: 0.85em;
 }
 
 .system-state-chip {

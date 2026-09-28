@@ -56,9 +56,22 @@ pub struct EqBandFader {
     pub solo_active: bool,
     pub hovered: bool,
     pub focused: bool,
+    /// Set while the global Smooth override is active: the band's own filter
+    /// type is replaced by the internal `Sin` wide bell, so the fader shows
+    /// "Sin" instead of the stored type. The stored type is untouched and
+    /// reappears when Smooth is switched off.
+    pub smooth_override: bool,
     pub drag_start_gain_db: f64,
     pub dragging_gain: bool,
-    pub gain_changed_callback: Option<Box<dyn Fn(usize, f64) + 'static>>,
+    /// Owner-authoritative gain request. The fader does NOT decide its own
+    /// gain: it asks the owner what gain it may actually use, and the owner
+    /// may clamp the request (peak safety). The RETURNED value, not the
+    /// requested one, is what gets applied.
+    ///
+    /// Stored as an `Rc` so a handler can clone it out and call it WITHOUT
+    /// holding a borrow on this fader — the owner re-enters the fader to
+    /// apply the result, which would panic on a nested `borrow_mut`.
+    pub gain_changed_callback: Option<Rc<dyn Fn(usize, f64) -> f64>>,
     /// Invoked when the user selects this band. The owner clears the other
     /// faders and mirrors the selection into the response graph, so this is a
     /// request rather than a direct `selected` mutation. Stored as an `Rc` so
@@ -70,7 +83,7 @@ pub struct EqBandFader {
 impl EqBandFader {
     pub fn new(
         index: usize,
-        gain_changed_callback: Box<dyn Fn(usize, f64) + 'static>,
+        gain_changed_callback: Rc<dyn Fn(usize, f64) -> f64>,
         selection_changed_callback: Rc<dyn Fn(usize)>,
     ) -> Rc<RefCell<Self>> {
         let fader = Rc::new(RefCell::new(Self {
@@ -91,6 +104,7 @@ impl EqBandFader {
             solo_active: false,
             hovered: false,
             focused: false,
+            smooth_override: false,
             drag_start_gain_db: 0.0,
             dragging_gain: false,
             gain_changed_callback: Some(gain_changed_callback),
@@ -129,35 +143,43 @@ impl EqBandFader {
                 f.drawing_area.queue_draw();
             });
             drag.connect_drag_update(move |gesture, _offset_x, offset_y| {
-                let mut f = f2.borrow_mut();
-                if !f.dragging_gain {
-                    let start = gesture.start_point();
-                    if start.is_none() {
-                        return;
+                // Snapshot what we need and RELEASE the borrow before asking
+                // the owner, which re-enters this fader.
+                let (index, cb, start_gain, height) = {
+                    let mut f = f2.borrow_mut();
+                    if !f.dragging_gain {
+                        let start = gesture.start_point();
+                        if start.is_none() {
+                            return;
+                        }
+                        let off = gesture.offset();
+                        if off.is_none() {
+                            return;
+                        }
+                        let (ox, oy) = off.unwrap();
+                        if f64::hypot(ox, oy) < FADER_DRAG_START_THRESHOLD_PX {
+                            return;
+                        }
+                        f.dragging_gain = true;
                     }
-                    let off = gesture.offset();
-                    if off.is_none() {
-                        return;
-                    }
-                    let (ox, oy) = off.unwrap();
-                    if f64::hypot(ox, oy) < FADER_DRAG_START_THRESHOLD_PX {
-                        return;
-                    }
-                    f.dragging_gain = true;
-                }
+                    (
+                        f.index,
+                        f.gain_changed_callback.clone(),
+                        f.drag_start_gain_db,
+                        f.drawing_area.allocated_height() as f64,
+                    )
+                };
                 let state = gesture.current_event_state();
                 let multiplier = interaction_multiplier_for_state(state);
-                let (_track_top, track_bottom) =
-                    track_bounds(f.drawing_area.allocated_height() as f64);
+                let (_track_top, track_bottom) = track_bounds(height);
                 let usable_height = (track_bottom - 56.0).max(1.0);
-                let gain = f.drag_start_gain_db
+                let gain = start_gain
                     - (offset_y / usable_height) * (EQ_GAIN_MAX_DB - EQ_GAIN_MIN_DB) * multiplier;
                 let gain = (gain.clamp(EQ_GAIN_MIN_DB, EQ_GAIN_MAX_DB) * 10.0).round() / 10.0;
-                if gain != f.gain_db {
-                    f.gain_db = gain;
-                    if let Some(cb) = &f.gain_changed_callback {
-                        cb(f.index, gain);
-                    }
+                let effective = apply_gain_request(&cb, index, gain);
+                let mut f = f2.borrow_mut();
+                if effective != f.gain_db {
+                    f.gain_db = effective;
                     f.drawing_area.queue_draw();
                 }
             });
@@ -175,20 +197,22 @@ impl EqBandFader {
             let scroll =
                 gtk4::EventControllerScroll::new(gtk4::EventControllerScrollFlags::VERTICAL);
             scroll.connect_scroll(move |_controller, _dx, dy| {
-                let mut f = fader_clone.borrow_mut();
                 if dy == 0.0 {
                     return glib::Propagation::Proceed;
                 }
                 let state = _controller.current_event_state();
+                let (index, cb, current) = {
+                    let f = fader_clone.borrow();
+                    (f.index, f.gain_changed_callback.clone(), f.gain_db)
+                };
                 let step = direct_step_for_state(state);
                 let delta = if dy < 0.0 { step } else { -step };
-                let gain = (f.gain_db + delta).clamp(EQ_GAIN_MIN_DB, EQ_GAIN_MAX_DB);
+                let gain = (current + delta).clamp(EQ_GAIN_MIN_DB, EQ_GAIN_MAX_DB);
                 let gain = (gain * 10.0).round() / 10.0;
-                if gain != f.gain_db {
-                    f.gain_db = gain;
-                    if let Some(cb) = &f.gain_changed_callback {
-                        cb(f.index, gain);
-                    }
+                let effective = apply_gain_request(&cb, index, gain);
+                let mut f = fader_clone.borrow_mut();
+                if effective != f.gain_db {
+                    f.gain_db = effective;
                     f.drawing_area.queue_draw();
                 }
                 glib::Propagation::Proceed
@@ -235,7 +259,9 @@ impl EqBandFader {
             let fader_clone = fader.clone();
             let key = gtk4::EventControllerKey::new();
             key.connect_key_pressed(move |_controller, key, _keycode, state| {
-                let mut f = fader_clone.borrow_mut();
+                // Read-only: every gain mutation goes through the owner so the
+                // peak cap is applied uniformly.
+                let f = fader_clone.borrow();
                 let step = direct_step_for_state(state);
                 let mut delta: Option<f64> = None;
                 match key {
@@ -257,13 +283,15 @@ impl EqBandFader {
                 }
 
                 if let Some(d) = delta {
-                    let gain = (f.gain_db + d).clamp(EQ_GAIN_MIN_DB, EQ_GAIN_MAX_DB);
+                    let (index, cb, current) =
+                        (f.index, f.gain_changed_callback.clone(), f.gain_db);
+                    drop(f);
+                    let gain = (current + d).clamp(EQ_GAIN_MIN_DB, EQ_GAIN_MAX_DB);
                     let gain = (gain * 10.0).round() / 10.0;
-                    if gain != f.gain_db {
-                        f.gain_db = gain;
-                        if let Some(cb) = &f.gain_changed_callback {
-                            cb(f.index, gain);
-                        }
+                    let effective = apply_gain_request(&cb, index, gain);
+                    let mut f = fader_clone.borrow_mut();
+                    if effective != f.gain_db {
+                        f.gain_db = effective;
                         f.drawing_area.queue_draw();
                     }
                     return glib::Propagation::Proceed;
@@ -271,15 +299,19 @@ impl EqBandFader {
 
                 match key {
                     gtk4::gdk::Key::_0 | gtk4::gdk::Key::KP_0 | gtk4::gdk::Key::Home => {
-                        if f.gain_db != 0.0 {
-                            f.gain_db = 0.0;
-                            if let Some(cb) = &f.gain_changed_callback {
-                                cb(f.index, 0.0);
-                            }
-                            f.drawing_area.queue_draw();
-                        }
-                        let (index, select) = (f.index, f.selection_changed_callback.clone());
+                        // Release the borrow before the owner re-enters us.
+                        let (index, cb, was_nonzero) =
+                            (f.index, f.gain_changed_callback.clone(), f.gain_db != 0.0);
+                        let select = f.selection_changed_callback.clone();
                         drop(f);
+                        if was_nonzero {
+                            let effective = apply_gain_request(&cb, index, 0.0);
+                            let mut f = fader_clone.borrow_mut();
+                            if f.gain_db != effective {
+                                f.gain_db = effective;
+                                f.drawing_area.queue_draw();
+                            }
+                        }
                         if let Some(cb) = select {
                             cb(index);
                         }
@@ -405,6 +437,24 @@ fn direct_step_for_state(state: gtk4::gdk::ModifierType) -> f64 {
     GAIN_STEP_DB
 }
 
+/// Route a gain request through the owner and return the gain the fader may
+/// actually use. With no owner installed the request is only range-clamped.
+///
+/// Every gain gesture (drag, scroll, keyboard, zero) MUST go through this so
+/// the owner's peak safety applies uniformly. A fader that set its own gain
+/// locally would bypass the clamp and let stacked shelves run past what the
+/// preamp floor can absorb.
+fn apply_gain_request(
+    cb: &Option<Rc<dyn Fn(usize, f64) -> f64>>,
+    index: usize,
+    requested: f64,
+) -> f64 {
+    match cb {
+        Some(cb) => cb(index, requested),
+        None => requested.clamp(EQ_GAIN_MIN_DB, EQ_GAIN_MAX_DB),
+    }
+}
+
 fn rounded_rectangle(ctx: &Context, x: f64, y: f64, width: f64, height: f64, radius: f64) {
     let right = x + width;
     let bottom = y + height;
@@ -493,6 +543,7 @@ pub fn filter_type_short_label(ft: FilterType) -> &'static str {
         FilterType::Resonance => "Res",
         FilterType::LadderPass => "LdP",
         FilterType::LadderRej => "LdR",
+        FilterType::Sin => "Sin",
     }
 }
 
@@ -646,7 +697,11 @@ fn draw_fader(ctx: &Context, width: i32, height: i32, fader: &EqBandFader) {
     } else {
         type_color
     };
-    let filter_text = filter_type_short_label(fader.filter_type);
+    let filter_text = if fader.smooth_override {
+        "Sin"
+    } else {
+        filter_type_short_label(fader.filter_type)
+    };
     draw_text(
         ctx,
         filter_text,

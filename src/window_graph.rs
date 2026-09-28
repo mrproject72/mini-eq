@@ -78,6 +78,9 @@ pub struct EqGraph {
     /// Output-monitor on/off switch, placed in the graph header (right of the
     /// "Frequency Response" title) so it sits directly above the spectrum.
     pub monitor_switch: gtk4::Switch,
+    /// Graph title row; `add_top_control` packs extra toggles into it.
+    header: gtk4::Box,
+    header_spacer: gtk4::Box,
     pub state: std::rc::Rc<std::cell::RefCell<EqGraphState>>,
 }
 
@@ -129,6 +132,7 @@ impl EqGraph {
         let header_spacer = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
         header_spacer.set_hexpand(true);
         header.append(&header_spacer);
+        let _ = &header_spacer;
 
         let monitor_label = gtk4::Label::new(Some("Monitor"));
         monitor_label.set_valign(gtk4::Align::Center);
@@ -151,8 +155,18 @@ impl EqGraph {
             analyzer_area,
             response_area,
             monitor_switch,
+            header,
+            header_spacer,
             state,
         }
+    }
+
+    /// Pack a control into the graph's top row, immediately left of the
+    /// Monitor toggle (so Monitor stays on the right edge).
+    pub fn add_top_control(&self, widget: &impl IsA<gtk4::Widget>) {
+        // Right after the expanding spacer, i.e. flush left of "Monitor".
+        self.header
+            .insert_child_after(widget, Some(&self.header_spacer));
     }
 
     pub fn set_mode(&mut self, mode: GraphMode) {

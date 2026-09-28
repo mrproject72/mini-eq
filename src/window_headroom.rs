@@ -68,36 +68,79 @@ impl HeadroomState {
 
 pub struct HeadroomPanel {
     pub container: gtk4::Box,
-    pub preamp_spin: gtk4::SpinButton,
+    /// Compact preamp trim. A SpinButton cost ~110px because of its
+    /// +/- buttons; a value-less Scale does the same job in ~96px, with the
+    /// number kept available in the tooltip.
+    pub preamp_scale: gtk4::Scale,
     pub peak_label: gtk4::Label,
     pub state_label: gtk4::Label,
-    pub meter_area: gtk4::DrawingArea,
+    /// Small status LED replacing the old bar meter: colour carries
+    /// the state, the numeric peak label carries the value.
+    pub led_area: gtk4::DrawingArea,
+    /// Colour of the status LED. Live-driven while the monitor is running,
+    /// curve-driven otherwise. Kept separate from `state` because `state`
+    /// also gates the Set Safe button, which must stay a property of the
+    /// EQ settings rather than of whatever material happens to be playing.
+    led_state: Rc<std::cell::Cell<HeadroomState>>,
     pub detail_label: gtk4::Label,
     pub set_safe_button: gtk4::Button,
     pub auto_safe_switch: gtk4::Switch,
     pub auto_safe: Rc<std::cell::Cell<bool>>,
+    /// Smooth (coupled) band editing: dragging one band drags its
+    /// neighbours by a decaying fraction so the curve stays smooth across
+    /// the adjacent bands on both sides.
+    pub smooth_switch: gtk4::Switch,
+    pub smooth: Rc<std::cell::Cell<bool>>,
+    /// Smooth spread control (Gaussian sigma, in bands) and the live value
+    /// read by the Smooth override. Min = 0.45 moves ONLY the dragged band.
+    pub smooth_width_scale: gtk4::Scale,
+    pub smooth_spread_bands: Rc<std::cell::Cell<f64>>,
     pub state: Rc<RefCell<HeadroomState>>,
     pub peak_value: Rc<RefCell<f64>>,
 }
 
 impl HeadroomPanel {
     pub fn new() -> Self {
-        let preamp_adj = gtk4::Adjustment::new(0.0, -24.0, 6.0, 0.5, 1.0, 0.0);
-        let preamp_spin = gtk4::SpinButton::new(Some(&preamp_adj), 0.5, 1);
-        preamp_spin.set_digits(1);
-        preamp_spin.set_width_chars(6);
-        preamp_spin.set_tooltip_text(Some("Preamp gain (dB)"));
+        let preamp_adj = gtk4::Adjustment::new(
+            0.0,
+            crate::core::EQ_PREAMP_MIN_DB,
+            crate::core::EQ_PREAMP_MAX_DB,
+            0.5,
+            1.0,
+            0.0,
+        );
+        let preamp_scale = gtk4::Scale::new(gtk4::Orientation::Horizontal, Some(&preamp_adj));
+        preamp_scale.set_digits(1);
+        // No inline value: that is what was costing ~40px of row width. The
+        // tooltip carries the number instead and is kept live below.
+        preamp_scale.set_draw_value(false);
+        preamp_scale.set_size_request(96, -1);
+        preamp_scale.set_valign(gtk4::Align::Center);
+        preamp_scale.set_tooltip_text(Some("Preamp gain: 0.0 dB"));
+        {
+            let tip = preamp_scale.clone();
+            preamp_scale.connect_value_changed(move |s| {
+                tip.set_tooltip_text(Some(&format!("Preamp gain: {:+.1} dB", s.value())));
+            });
+        }
 
-        let peak_label = gtk4::Label::new(Some("Peak: -inf dBFS"));
+        // No "Peak: " prefix -- the LED beside it already says what this is,
+        // and the prefix was costing ~40px of row width.
+        let peak_label = gtk4::Label::new(Some("-- dB"));
         peak_label.set_css_classes(&["numeric"]);
+        peak_label.set_tooltip_text(Some("Estimated output peak (dBFS)"));
 
         let state_label = gtk4::Label::new(Some("Safe"));
         state_label.set_css_classes(&["headroom-state-label", "headroom-panel-safe"]);
 
-        let meter_area = gtk4::DrawingArea::new();
-        meter_area.set_size_request(260, 14);
-        meter_area.set_hexpand(true);
-        meter_area.set_valign(gtk4::Align::Center);
+        // A compact LED instead of the old bar meter. The bar needed ~90px
+        // and pushed the whole output row onto a second line once every
+        // switch was active; the LED costs 18px and the numeric peak label
+        // already carries the actual value.
+        let led_area = gtk4::DrawingArea::new();
+        led_area.set_size_request(18, 18);
+        led_area.set_hexpand(false);
+        led_area.set_valign(gtk4::Align::Center);
 
         let detail_label = gtk4::Label::new(Some(""));
         detail_label.set_css_classes(&["numeric"]);
@@ -113,7 +156,7 @@ impl HeadroomPanel {
         let auto_safe = Rc::new(std::cell::Cell::new(false));
         {
             let auto_safe = auto_safe.clone();
-            let preamp_spin = preamp_spin.clone();
+            let preamp_spin = preamp_scale.clone();
             auto_safe_switch.connect_state_set(move |_sw, on| {
                 auto_safe.set(on);
                 // The auto algorithm owns the preamp while enabled, so the
@@ -122,6 +165,48 @@ impl HeadroomPanel {
                 glib::Propagation::Proceed
             });
         }
+
+        let smooth_switch = gtk4::Switch::new();
+        smooth_switch.set_valign(gtk4::Align::Center);
+        smooth_switch.set_tooltip_text(Some(
+            "Couple adjacent bands: dragging one band smoothly drags its neighbours on both sides",
+        ));
+        let smooth = Rc::new(std::cell::Cell::new(false));
+        {
+            let smooth = smooth.clone();
+            smooth_switch.connect_state_set(move |_sw, on| {
+                smooth.set(on);
+                glib::Propagation::Proceed
+            });
+        }
+
+        // Bounds derive from the real band layout so the control can never
+        // be dragged into the underlap zone (width < ~0.9x band spacing),
+        // which breaks the curve into separate bumps with troughs between.
+        let (w_min, w_max, w_default) = crate::core::smooth_spread_bounds_bands();
+        let smooth_width_adj = gtk4::Adjustment::new(w_default, w_min, w_max, 0.05, 0.1, 0.0);
+        let smooth_width_scale =
+            gtk4::Scale::new(gtk4::Orientation::Horizontal, Some(&smooth_width_adj));
+        smooth_width_scale.set_digits(2);
+        smooth_width_scale.set_draw_value(true);
+        smooth_width_scale.set_value_pos(gtk4::PositionType::Right);
+        smooth_width_scale.set_size_request(110, -1);
+        smooth_width_scale.set_valign(gtk4::Align::Center);
+        smooth_width_scale.set_tooltip_text(Some(
+            "How many bands move when you drag one.\n\
+             Left  = only the dragged band (1 band).\n\
+             Right = most of the spectrum moves together.\n\
+             The bell width follows automatically so the bump stays smooth.",
+        ));
+        let smooth_spread_bands = Rc::new(std::cell::Cell::new(w_default));
+        {
+            let smooth_spread_bands = smooth_spread_bands.clone();
+            smooth_width_scale.connect_value_changed(move |s| {
+                smooth_spread_bands.set(s.value());
+            });
+        }
+        // The width only matters while Smooth is active.
+        smooth_width_scale.set_sensitive(false);
 
         let container = gtk4::Box::new(gtk4::Orientation::Vertical, 6);
         container.set_css_classes(&["headroom-panel-safe"]);
@@ -135,46 +220,39 @@ impl HeadroomPanel {
         header.append(&state_label);
         container.append(&header);
 
-        let preamp_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
-        let preamp_label = gtk4::Label::new(Some("Preamp:"));
-        preamp_box.append(&preamp_label);
-        preamp_box.append(&preamp_spin);
-        container.append(&preamp_box);
-
-        // NOTE: the Auto-Safe switch is placed in the MAIN window (between
-        // the spectrum and the faders) by build_main_layout, not here. The
-        // switch widget + its wiring still live on this panel and are
-        // reparented there.
-
-        container.append(&peak_label);
-        container.append(&meter_area);
-        container.append(&detail_label);
-        container.append(&set_safe_button);
+        // NOTE: the Auto-Safe switch, the preamp control, the peak label,
+        // the peak meter and the Set Safe button are NOT appended here. They
+        // live in the MAIN window's output control row (see
+        // `window_layout::build_output_control_row`), which reparents them.
+        // GTK4 will NOT move a widget out of an existing parent, so they must
+        // be left unparented here or `gtk_box_append` asserts.
+        //
+        // `detail_label` is likewise not shown in the sidebar; `update_peak`
+        // surfaces its text as the Set Safe button's tooltip instead.
 
         let state = Rc::new(RefCell::new(HeadroomState::Safe));
         let peak_value = Rc::new(RefCell::new(f64::NEG_INFINITY));
-        let meter_state = state.clone();
-        let meter_peak = peak_value.clone();
-        meter_area.set_draw_func(move |_area, ctx, width, height| {
-            Self::draw_meter(
-                ctx,
-                width,
-                height,
-                *meter_state.borrow(),
-                *meter_peak.borrow(),
-            );
+        let led_state = Rc::new(std::cell::Cell::new(HeadroomState::Safe));
+        let led_draw_state = led_state.clone();
+        led_area.set_draw_func(move |_area, ctx, width, height| {
+            Self::draw_led(ctx, width, height, led_draw_state.get());
         });
 
         Self {
             container,
-            preamp_spin,
+            preamp_scale,
             peak_label,
             state_label,
-            meter_area,
+            led_area,
+            led_state,
             detail_label,
             set_safe_button,
             auto_safe_switch,
             auto_safe,
+            smooth_switch,
+            smooth,
+            smooth_width_scale,
+            smooth_spread_bands,
             state,
             peak_value,
         }
@@ -182,6 +260,9 @@ impl HeadroomPanel {
 
     pub fn set_state(&self, state: HeadroomState) {
         *self.state.borrow_mut() = state;
+        // Curve-driven default; `apply_live_peak` overrides this whenever
+        // the monitor is delivering samples.
+        self.led_state.set(state);
         self.state_label.set_label(match state {
             HeadroomState::Safe => "Safe",
             HeadroomState::Tight => "Tight",
@@ -193,7 +274,7 @@ impl HeadroomPanel {
         self.container.set_css_classes(&[state.css_class()]);
         self.set_safe_button
             .set_visible(state == HeadroomState::Risk);
-        self.meter_area.queue_draw();
+        self.led_area.queue_draw();
     }
 
     pub fn update_peak(&mut self, peak_db: f64) {
@@ -211,20 +292,33 @@ impl HeadroomPanel {
         };
         self.set_state(state);
 
-        let peak_text = format!("Peak: {}", format_headroom_peak_db(peak_db));
+        let peak_text = format_headroom_peak_db(peak_db);
         self.peak_label.set_label(&peak_text);
 
         let detail = if peak_db > 0.5 {
-            format!("Lower preamp by {:.1} dB.", peak_db + 1.0)
+            if self.auto_safe_enabled() {
+                // Auto-Safe's only lever is the preamp; if it is pinned at the
+                // floor and the curve still exceeds 0 dBFS there is nothing
+                // left to lower — the user must reduce band gains instead.
+                "Auto-Safe maxed out \u{2014} reduce band gains.".to_string()
+            } else {
+                format!("Lower preamp by {:.1} dB.", peak_db + 1.0)
+            }
         } else if peak_db > -0.5 {
             "Small boosts may clip.".to_string()
         } else {
             "Curve stays below 0 dBFS.".to_string()
         };
         self.detail_label.set_label(&detail);
+        // The detail text is not shown in the sidebar any more, so surface it
+        // on the control it refers to.
+        self.set_safe_button.set_tooltip_text(Some(&detail));
 
-        // Upstream only surfaces "Set Safe" when the curve is actually at risk.
-        let needs_fix = peak_db > 0.5;
+        // Upstream only surfaces "Set Safe" when the curve is actually at
+        // risk. With Auto-Safe on there is no safe click to make: the preamp
+        // is already where Auto-Safe (or its floor) puts it, so the button
+        // would be a no-op that re-opens the same Risk state.
+        let needs_fix = peak_db > 0.5 && !self.auto_safe_enabled();
         self.set_safe_button.set_visible(needs_fix);
         self.set_safe_button.set_sensitive(needs_fix);
     }
@@ -237,8 +331,52 @@ impl HeadroomPanel {
         self.update_peak(peak);
     }
 
+    /// Show the **live** output peak when the monitor is running.
+    ///
+    /// Why this exists: `estimate_response_peak_db` is a property of the EQ
+    /// *settings* — "how much boost can this curve apply" — not a
+    /// measurement of the audio. Two consequences of labelling it as a
+    /// peak:
+    ///
+    /// 1. It only changes when a band or the preamp changes, so with the
+    ///    monitor on the number sat frozen until the user moved a slider.
+    /// 2. Compared against any real level meter it looks far too loud, e.g.
+    ///    "+6.0 dB" of available boost vs a program actually peaking at
+    ///    -14 dBFS. Different quantities, same label.
+    ///
+    /// So: live audio -> real dBFS. No monitor -> say plainly that the
+    /// number is the curve's maximum boost, not a level.
+    pub fn apply_live_peak(&mut self, live_dbfs: Option<f64>) {
+        match live_dbfs {
+            Some(db) if db.is_finite() => {
+                self.peak_label.set_label(&format!("{db:.1} dBFS"));
+                self.peak_label
+                    .set_tooltip_text(Some("Live output peak (dBFS)"));
+                // The LED goes live with the monitor: clipping is a property
+                // of the actual signal, so showing the curve's worst case
+                // while real audio is available would be the less honest
+                // choice. Thresholds mirror the Auto-Safe target.
+                self.led_state.set(if db > AUTO_SAFE_TARGET_DBFS {
+                    HeadroomState::Risk
+                } else if db > AUTO_SAFE_TARGET_DBFS - 3.0 {
+                    HeadroomState::Tight
+                } else {
+                    HeadroomState::Safe
+                });
+            }
+            _ => {
+                let est = *self.peak_value.borrow();
+                self.peak_label.set_label(&format!("{est:+.1} dB"));
+                self.peak_label.set_tooltip_text(Some(
+                    "Maximum boost of the EQ curve — not a live level.\n\
+                     Turn on Monitor to see the real output peak.",
+                ));
+            }
+        }
+    }
+
     pub fn preamp_value(&self) -> f64 {
-        self.preamp_spin.value()
+        self.preamp_scale.value()
     }
 
     /// Whether the Auto-Safe continuous preamp clamp is enabled.
@@ -246,65 +384,56 @@ impl HeadroomPanel {
         self.auto_safe.get()
     }
 
+    /// Whether smooth (neighbour-coupled) band editing is enabled.
+    pub fn smooth_enabled(&self) -> bool {
+        self.smooth.get()
+    }
+
     pub fn set_preamp_value(&self, preamp_db: f64) {
-        self.preamp_spin.set_value(preamp_db);
+        self.preamp_scale.set_value(preamp_db);
     }
 
     pub fn widget(&self) -> &gtk4::Box {
         &self.container
     }
 
-    fn draw_meter(ctx: &Context, width: i32, height: i32, state: HeadroomState, peak_db: f64) {
+    /// Paint the status LED: a lamp in a dark socket, coloured by headroom
+    /// state. No bar, no scale — the numeric label next to it carries the
+    /// value, so this only has to answer "am I safe?".
+    fn draw_led(ctx: &Context, width: i32, height: i32, state: HeadroomState) {
         let w = width as f64;
         let h = height as f64;
+        let cx = w / 2.0;
+        let cy = h / 2.0;
+        let r = (w.min(h) / 2.0 - 2.5).max(3.0);
 
-        ctx.set_source_rgb(0.12, 0.12, 0.14);
-        ctx.rectangle(0.0, 0.0, w, h);
+        let color = match state {
+            HeadroomState::Safe => (0.24, 0.80, 0.40),
+            HeadroomState::Tight => (0.96, 0.74, 0.22),
+            HeadroomState::Risk => (0.93, 0.27, 0.23),
+            HeadroomState::Bypass => (0.46, 0.50, 0.55),
+        };
+
+        // Dark socket ring so it reads as a lamp rather than a bare dot.
+        ctx.set_source_rgba(0.0, 0.0, 0.0, 0.55);
+        ctx.arc(cx, cy, r + 1.6, 0.0, std::f64::consts::TAU);
         ctx.fill().unwrap();
 
-        // Segment boundaries come from upstream `headroom_meter_norm`: the axis
-        // spans HEADROOM_METER_MIN_DB..HEADROOM_METER_MAX_DB (-12..+24 dB), with
-        // colour changes at the safe (-3 dB) and risk (0 dB) limits.
-        let segments = [
-            (
-                HEADROOM_METER_MIN_DB,
-                HEADROOM_SAFE_LIMIT_DB,
-                (0.38, 0.78, 0.50),
-            ),
-            (
-                HEADROOM_SAFE_LIMIT_DB,
-                HEADROOM_RISK_LIMIT_DB,
-                (0.58, 0.66, 0.76),
-            ),
-            (
-                HEADROOM_RISK_LIMIT_DB,
-                HEADROOM_METER_MAX_DB,
-                (1.0, 0.35, 0.28),
-            ),
-        ];
+        // Lamp body.
+        ctx.set_source_rgb(color.0, color.1, color.2);
+        ctx.arc(cx, cy, r, 0.0, std::f64::consts::TAU);
+        ctx.fill().unwrap();
 
-        for (left_db, right_db, color) in segments {
-            let left = headroom_meter_norm(left_db) * w;
-            let right = headroom_meter_norm(right_db) * w;
-            ctx.set_source_rgb(color.0, color.1, color.2);
-            ctx.rectangle(left, 0.0, (right - left).max(1.0), h);
-            ctx.fill().unwrap();
-        }
-
-        // 0 dBFS reference line.
-        let zero_x = headroom_meter_norm(0.0) * w;
-        ctx.set_source_rgba(0.05, 0.07, 0.10, 0.62);
-        ctx.set_line_width(1.0);
-        ctx.move_to(zero_x, 0.0);
-        ctx.line_to(zero_x, h);
-        ctx.stroke().unwrap();
-
-        if state != HeadroomState::Bypass && peak_db.is_finite() {
-            let marker_x = headroom_meter_norm(peak_db) * w;
-            ctx.set_source_rgba(0.96, 0.98, 1.0, 0.98);
-            ctx.arc(marker_x, h / 2.0, 3.2, 0.0, std::f64::consts::TAU);
-            ctx.fill().unwrap();
-        }
+        // Specular highlight.
+        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.38);
+        ctx.arc(
+            cx - r * 0.28,
+            cy - r * 0.30,
+            r * 0.34,
+            0.0,
+            std::f64::consts::TAU,
+        );
+        ctx.fill().unwrap();
     }
 }
 

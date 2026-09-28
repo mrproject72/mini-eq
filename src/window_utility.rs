@@ -16,7 +16,9 @@ use crate::window_presets;
 /// Stack page names (used by the header buttons to switch panels).
 pub const PAGE_PRESET: &str = "preset";
 pub const PAGE_ANALYZER: &str = "analyzer";
-pub const PAGE_HEADROOM: &str = "headroom";
+/// Output device settings only. The headroom/preamp/A-B controls that used
+/// to live here now sit in the main window's output control row.
+pub const PAGE_OUTPUT: &str = "output";
 
 /// Utility sidebar holding the three panels in a `Stack`.
 pub struct UtilityPane {
@@ -64,17 +66,10 @@ impl UtilityPane {
         analyzer_box.append(&monitor_panel);
         let analyzer_page = Self::scroll_page(&analyzer_box);
 
-        // --- Headroom page: preamp + peak meter + auto-safe + A/B compare.
-        let headroom_box = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
-        headroom_box.set_margin_top(8);
-        headroom_box.set_margin_bottom(8);
-        headroom_box.set_margin_start(8);
-        headroom_box.set_margin_end(8);
-        let bypass_switch = Self::build_compare_row();
-        headroom_box.append(&bypass_switch.0);
-        headroom_box.append(headroom.borrow().widget());
-
-        // Output Controls: output device + per-device auto-preset actions.
+        // --- Output page: output-device settings ONLY. The headroom meter,
+        // preamp, Auto-Safe and A/B compare now live in the main window's
+        // output control row (see `window_layout::build_output_control_row`).
+        let bypass_switch = Self::build_bypass_switch();
         let (
             output_controls,
             output_dropdown,
@@ -83,10 +78,13 @@ impl UtilityPane {
             link_button,
             link_label,
         ) = Self::build_output_controls();
-        headroom_box.append(&output_controls);
-
-        let headroom_page = Self::scroll_page(&headroom_box);
-        let bypass_switch = bypass_switch.1;
+        let output_box = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
+        output_box.set_margin_top(8);
+        output_box.set_margin_bottom(8);
+        output_box.set_margin_start(8);
+        output_box.set_margin_end(8);
+        output_box.append(&output_controls);
+        let output_page = Self::scroll_page(&output_box);
 
         // --- Stack: the three pages, Preset shown by default.
         let stack = gtk4::Stack::new();
@@ -95,7 +93,7 @@ impl UtilityPane {
         stack.set_transition_type(gtk4::StackTransitionType::SlideLeftRight);
         stack.add_titled(&preset_page, Some(PAGE_PRESET), "Preset");
         stack.add_titled(&analyzer_page, Some(PAGE_ANALYZER), "Analyzer");
-        stack.add_titled(&headroom_page, Some(PAGE_HEADROOM), "Headroom");
+        stack.add_titled(&output_page, Some(PAGE_OUTPUT), "Output");
         stack.set_visible_child_name(PAGE_PRESET);
 
         Self {
@@ -126,21 +124,14 @@ impl UtilityPane {
         sw
     }
 
-    /// A/B compare (EQ bypass) row for the headroom page. Returns the row
-    /// box and the bypass switch.
-    fn build_compare_row() -> (gtk4::Box, gtk4::Switch) {
-        let compare_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
-        compare_row.set_css_classes(&["compare-row"]);
-        let compare_label = gtk4::Label::new(Some("A/B Compare"));
-        compare_label.set_css_classes(&["metric-title"]);
-        compare_label.set_hexpand(true);
-        compare_row.append(&compare_label);
-
+    /// A/B compare (EQ bypass) switch. The switch is reparented into the
+    /// main window's output control row, so it is built standalone rather
+    /// than wrapped in a sidebar row.
+    fn build_bypass_switch() -> gtk4::Switch {
         let bypass_switch = gtk4::Switch::new();
         bypass_switch.set_valign(gtk4::Align::Center);
         bypass_switch.set_tooltip_text(Some("Bypass the EQ to compare with/without"));
-        compare_row.append(&bypass_switch);
-        (compare_row, bypass_switch)
+        bypass_switch
     }
 
     /// "Output Controls" section for the Headroom page: the output-device

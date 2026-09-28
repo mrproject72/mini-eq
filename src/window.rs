@@ -16,6 +16,46 @@ use crate::window_state;
 use crate::window_utility::UtilityPane;
 use crate::window_utils;
 
+/// Snapshot the live fader state as `EqBand`s (the shape the DSP/peak math uses).
+///
+/// When `smooth` is set the Smooth override is applied on the way out:
+/// every non-`Off` band reports as the internal `Sin` bell. `spread_bands`
+/// is the spread in bands (Gaussian sigma); the bell Q is derived from it
+/// so the bump always bridges whatever bands participate. The faders' own
+/// type/Q are never mutated, so switching Smooth off restores them exactly.
+fn fader_band_snapshot(
+    registry: &Rc<RefCell<Vec<Rc<RefCell<crate::band_fader::EqBandFader>>>>>,
+    smooth: bool,
+    spread_bands: f64,
+) -> Vec<crate::core::EqBand> {
+    let bands: Vec<crate::core::EqBand> = registry
+        .borrow()
+        .iter()
+        .map(|f| {
+            let fader = f.borrow();
+            crate::core::EqBand {
+                index: fader.index,
+                frequency: fader.frequency,
+                gain_db: fader.gain_db,
+                q: fader.q_value,
+                filter_type: fader.filter_type,
+                mute: fader.muted,
+                solo: fader.soloed,
+                coefficients: crate::core::BiquadCoefficients::identity(),
+            }
+        })
+        .collect();
+    if smooth {
+        let spacing = crate::core::band_spacing_oct(&bands);
+        let q = crate::core::smooth_bell_q(spread_bands, spacing);
+        return bands
+            .iter()
+            .map(|b| crate::core::smooth_effective_band(b, q))
+            .collect();
+    }
+    bands
+}
+
 /// Apply `edit` to the fader at `index`, redrawing it when it exists.
 fn edit_fader(
     registry: &Rc<RefCell<Vec<Rc<RefCell<crate::band_fader::EqBandFader>>>>>,
@@ -79,6 +119,19 @@ impl MiniEqWindow {
         // Build utility pane
         let utility = UtilityPane::new();
 
+        // A/B compare belongs with the other output toggles at the top of
+        // the graph, not on the crowded output control row.
+        {
+            let ab_item = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+            ab_item.set_tooltip_text(Some("Bypass the EQ to compare with/without"));
+            let ab_label = gtk4::Label::new(Some("A/B"));
+            ab_label.set_valign(gtk4::Align::Center);
+            ab_label.set_css_classes(&["monitor-toggle-label"]);
+            ab_item.append(&ab_label);
+            ab_item.append(&utility.bypass_switch);
+            utility.graph.borrow().add_top_control(&ab_item);
+        }
+
         // Build header bar
         let header_bar = adw::HeaderBar::new();
         let window_title = adw::WindowTitle::new("Mini EQ", "");
@@ -114,7 +167,7 @@ impl MiniEqWindow {
         analyzer_btn.set_tooltip_text(Some("Signal Analyzer"));
         let headroom_btn = gtk4::ToggleButton::new();
         headroom_btn.set_icon_name("audio-volume-high-symbolic");
-        headroom_btn.set_tooltip_text(Some("Headroom / Levels"));
+        headroom_btn.set_tooltip_text(Some("Output / Device"));
         panel_switch_box.append(&preset_btn);
         panel_switch_box.append(&analyzer_btn);
         panel_switch_box.append(&headroom_btn);
@@ -149,6 +202,75 @@ impl MiniEqWindow {
                 }
             })
         };
+        // Owner-authoritative gain request shared by EVERY gain source: the
+        // fader drag / scroll / keyboard / zero gestures AND the band editor
+        // spin. It returns the gain the band may actually use after peak
+        // safety, so callers apply the returned value instead of what they
+        // asked for.
+        //
+        // Why this matters: the preamp floor (-24 dB) is the only headroom
+        // lever. Two maxed Hi-Shelves stack their plateaus and measured
+        // ~+59 dB raw, so the preamp would need ~-60 dB to stay safe. The
+        // cap keeps the raw peak inside what the preamp can always absorb.
+        let gain_request: Rc<dyn Fn(usize, f64) -> f64> = {
+            let registry = fader_registry.clone();
+            let refresh = refresh_editor.clone();
+            let smooth = utility.headroom.borrow().smooth.clone();
+            let spread_bands = utility.headroom.borrow().smooth_spread_bands.clone();
+            Rc::new(move |index, gain_db| {
+                let bands = fader_band_snapshot(&registry, smooth.get(), spread_bands.get());
+                let clamped = crate::core::clamp_gain_for_peak(
+                    &bands,
+                    index,
+                    gain_db,
+                    crate::core::SAMPLE_RATE,
+                    crate::core::MAX_SAFE_RAW_PEAK_DB,
+                );
+                edit_fader(&registry, index, |fader| {
+                    fader.gain_db = clamped;
+                });
+
+                // Smooth mode: the dragged band's EFFECTIVE delta (post-cap)
+                // drags the neighbours through a Gaussian kernel, so the
+                // summed response is one broad, smooth curve instead of an
+                // isolated hump. The slider's width sets BOTH the bell width
+                // and how many bands participate (sigma = width / spacing);
+                // they must move together or the bells cannot bridge the
+                // participating region and ripple appears on the bump.
+                // Neighbours are clamped one at a time against a fresh
+                // snapshot so the peak cap always sees the latest state.
+                if smooth.get() && index < bands.len() {
+                    let delta = clamped - bands[index].gain_db;
+                    if delta != 0.0 {
+                        // The slider value IS the Gaussian sigma (in bands).
+                        let sigma = spread_bands.get();
+                        for (other, weighted) in
+                            crate::core::smooth_kernel_weights(index, delta, sigma, bands.len())
+                        {
+                            let cur =
+                                fader_band_snapshot(&registry, smooth.get(), spread_bands.get());
+                            let Some(cur_band) = cur.get(other) else {
+                                continue;
+                            };
+                            let want = cur_band.gain_db + weighted;
+                            let c = crate::core::clamp_gain_for_peak(
+                                &cur,
+                                other,
+                                want,
+                                crate::core::SAMPLE_RATE,
+                                crate::core::MAX_SAFE_RAW_PEAK_DB,
+                            );
+                            edit_fader(&registry, other, |fader| {
+                                fader.gain_db = c;
+                            });
+                        }
+                    }
+                }
+                refresh();
+                clamped
+            })
+        };
+
         let selection_callback = {
             let registry = fader_registry.clone();
             let graph = utility.graph.clone();
@@ -215,14 +337,12 @@ impl MiniEqWindow {
                 })
             },
             gain_changed: {
-                let registry = fader_registry.clone();
-                let refresh = refresh_editor.clone();
+                let gain_request = gain_request.clone();
                 Box::new(move |index, gain_db| {
-                    edit_fader(&registry, index, |fader| {
-                        fader.gain_db =
-                            gain_db.clamp(crate::core::EQ_GAIN_MIN_DB, crate::core::EQ_GAIN_MAX_DB);
-                    });
-                    refresh();
+                    // Route through the shared request so the editor spin and
+                    // the faders obey the same peak cap. `refresh()` inside
+                    // pulls the clamped value back into the spin.
+                    gain_request(index, gain_db);
                 })
             },
             filter_type_changed: {
@@ -264,9 +384,35 @@ impl MiniEqWindow {
             &utility,
             &band_editor,
             crate::core::DEFAULT_ACTIVE_BANDS,
+            gain_request.clone(),
             selection_callback,
         );
         *fader_registry.borrow_mut() = band_faders.clone();
+
+        // Smooth override wiring. The switch already drives the shared
+        // `smooth` cell (read by the DSP snapshot + gain path); this handler
+        // reflects it onto the UI: every fader shows "Sin" and the type/Q
+        // controls lock, because the override pins them. The bands' own
+        // type/Q are never mutated, so switching off restores them exactly.
+        {
+            let registry = fader_registry.clone();
+            let editor = band_editor.clone();
+            let width_scale = utility.headroom.borrow().smooth_width_scale.clone();
+            utility
+                .headroom
+                .borrow()
+                .smooth_switch
+                .connect_state_set(move |_sw, on| {
+                    for fader in registry.borrow().iter() {
+                        fader.borrow_mut().smooth_override = on;
+                        fader.borrow().drawing_area.queue_draw();
+                    }
+                    editor.set_type_and_q_enabled(!on);
+                    // The width control only means anything while Smooth is on.
+                    width_scale.set_sensitive(on);
+                    glib::Propagation::Proceed
+                });
+        }
         refresh_editor();
         let split_view = Rc::new(RefCell::new(split_view));
 
@@ -309,7 +455,7 @@ impl MiniEqWindow {
             let pages = [
                 crate::window_utility::PAGE_PRESET,
                 crate::window_utility::PAGE_ANALYZER,
-                crate::window_utility::PAGE_HEADROOM,
+                crate::window_utility::PAGE_OUTPUT,
             ];
             for (btn, page) in all_buttons.iter().zip(pages.iter()) {
                 let stack = stack.clone();
@@ -441,7 +587,7 @@ impl MiniEqWindow {
 
         // Start real-time update loop for graph + headroom + backend push
         // Shared flag: true when the EQ curve peak exceeds the -1 dBFS
-        // target. Drives the blinking Headroom header-icon warning.
+        // target. Drives the blinking alert on the Set Safe button.
         let headroom_warning = Rc::new(std::cell::Cell::new(false));
         {
             let graph = utility.graph.clone();
@@ -460,6 +606,11 @@ impl MiniEqWindow {
                 std::time::Instant::now() - std::time::Duration::from_millis(500),
             ));
             glib::timeout_add_local(std::time::Duration::from_millis(33), move || {
+                // Smooth override: the graph, the peak estimate and the
+                // backend push must all see the SAME effective bands, or the
+                // displayed curve would disagree with the audio.
+                let smooth_on = headroom.borrow().smooth.get();
+                let spread = headroom.borrow().smooth_spread_bands.get();
                 let bands: Vec<crate::core::EqBand> = band_faders
                     .iter()
                     .map(|f| {
@@ -476,22 +627,50 @@ impl MiniEqWindow {
                         }
                     })
                     .collect();
+                let bands = if smooth_on {
+                    let spacing = crate::core::band_spacing_oct(&bands);
+                    let q = crate::core::smooth_bell_q(spread, spacing);
+                    bands
+                        .iter()
+                        .map(|b| crate::core::smooth_effective_band(b, q))
+                        .collect()
+                } else {
+                    bands
+                };
                 // Auto-Safe: continuously clamp the preamp so the curve peak
                 // stays under the target. Runs before reading `preamp_db` so
                 // the graph, the meter and the backend push all see the
                 // adjusted value. Sliding the EQ up auto-lowers the preamp;
                 // sliding down lets it rise back toward 0.
+                // Read the live monitor peak ONCE per tick: the analyzer's
+                // take_window_peak() consumes the value, so a second read in
+                // the same tick would come back empty.
+                let live_peak = backend
+                    .borrow()
+                    .as_ref()
+                    .and_then(|be| be.monitor_peak_dbfs());
+
                 if headroom.borrow().auto_safe_enabled() {
                     let raw_peak = crate::core::estimate_response_peak_db(
                         &bands,
                         0.0,
                         crate::core::SAMPLE_RATE,
                     );
+                    // Feed-forward ONLY, deliberately. A live-driven
+                    // preamp was tried and rejected: this tick runs at
+                    // 33 ms and there is no hard limiter in the PipeWire
+                    // filter chain, so program transients (1-10 ms) pass
+                    // and clip before any feedback loop can react. The
+                    // curve peak is known in advance, which is the only
+                    // thing here that can prevent clipping.
+                    //
+                    // The live peak is still used -- for the numeric label
+                    // and the LED -- just never to drive the preamp.
                     let desired = crate::window_headroom::auto_safe_preamp_db(
                         raw_peak,
                         crate::window_headroom::AUTO_SAFE_TARGET_DBFS,
                     );
-                    if (desired - headroom.borrow().preamp_value()).abs() > 0.05 {
+                    if (desired - headroom.borrow().preamp_value()).abs() > 0.01 {
                         headroom.borrow_mut().set_preamp_value(desired);
                     }
                 }
@@ -544,10 +723,11 @@ impl MiniEqWindow {
                 // output level). When the monitor is off, fall back to the
                 // estimated curve peak but only warn on an actual boost
                 // (peak > 0 dB), so a flat/neutral EQ never false-triggers.
-                let live_peak = backend
-                    .borrow()
-                    .as_ref()
-                    .and_then(|be| be.monitor_peak_dbfs());
+                // The curve peak above is a property of the EQ settings,
+                // not a measurement, so it must not be presented as a
+                // level. Show the real output peak whenever the monitor is
+                // delivering one; otherwise label the estimate explicitly.
+                headroom.borrow_mut().apply_live_peak(live_peak);
                 let warn = match live_peak {
                     Some(db) => db > crate::window_headroom::AUTO_SAFE_TARGET_DBFS,
                     None => {
@@ -564,21 +744,34 @@ impl MiniEqWindow {
                 if sig != *last_pushed_sig.borrow()
                     && last_push.borrow().elapsed() >= std::time::Duration::from_millis(400)
                 {
-                    if let Some(be) = backend.borrow_mut().as_mut() {
-                        if !engine_sink.is_empty() {
-                            let _ = be.set_preamp(preamp_db);
-                            *be.get_bands_mut() = bands.clone();
-                            match be.update_state_live_or_reload(&engine_sink) {
-                                Ok(()) => {
-                                    log::debug!("Backend state applied");
+                    // Startup grace: the live node proxy is captured
+                    // asynchronously after the module load. Pushing before it
+                    // exists used to fall through to a full module
+                    // unload+reload, cutting the audio a SECOND time just
+                    // after startup. Leave the signature unpushed so the next
+                    // tick retries once the proxy has arrived.
+                    let live_ready = backend
+                        .borrow()
+                        .as_ref()
+                        .map(|be| be.has_live_node())
+                        .unwrap_or(false);
+                    if live_ready {
+                        if let Some(be) = backend.borrow_mut().as_mut() {
+                            if !engine_sink.is_empty() {
+                                let _ = be.set_preamp(preamp_db);
+                                *be.get_bands_mut() = bands.clone();
+                                match be.update_state_live_or_reload(&engine_sink) {
+                                    Ok(()) => {
+                                        log::debug!("Backend state applied");
+                                    }
+                                    Err(e) => log::warn!("Failed to apply backend state: {}", e),
                                 }
-                                Err(e) => log::warn!("Failed to apply backend state: {}", e),
                             }
+                            // Mark pushed either way so a failing state is not
+                            // retried every tick; further edits change the sig.
+                            *last_pushed_sig.borrow_mut() = sig;
+                            *last_push.borrow_mut() = std::time::Instant::now();
                         }
-                        // Mark pushed either way so a failing state is not
-                        // retried every tick; further edits change the sig.
-                        *last_pushed_sig.borrow_mut() = sig;
-                        *last_push.borrow_mut() = std::time::Instant::now();
                     }
                 }
                 ControlFlow::Continue
@@ -588,21 +781,26 @@ impl MiniEqWindow {
         // Blink the Headroom header icon while the EQ curve peak is over the
         // -1 dBFS target. GTK4 CSS has no @keyframes, so we toggle a class
         // on a 500 ms timer; a CSS color transition smooths it into a pulse.
+        // Blink the clipping alert on the **Set Safe** button while the EQ
+        // curve peak is over the -1 dBFS target. The header icon no longer
+        // flashes: the alert belongs on the control that fixes it. GTK4 CSS
+        // has no @keyframes, so we toggle a class on a 500 ms timer; a CSS
+        // color transition smooths it into a pulse.
         {
-            let headroom_btn = headroom_btn.clone();
+            let set_safe = utility.headroom.borrow().set_safe_button.clone();
             let headroom_warning = headroom_warning.clone();
             let blink_on = Rc::new(std::cell::Cell::new(false));
             glib::timeout_add_local(std::time::Duration::from_millis(500), move || {
                 if headroom_warning.get() {
                     blink_on.set(!blink_on.get());
                     if blink_on.get() {
-                        headroom_btn.add_css_class("headroom-warning");
+                        set_safe.add_css_class("headroom-warning");
                     } else {
-                        headroom_btn.remove_css_class("headroom-warning");
+                        set_safe.remove_css_class("headroom-warning");
                     }
-                } else if blink_on.get() || headroom_btn.has_css_class("headroom-warning") {
+                } else if blink_on.get() || set_safe.has_css_class("headroom-warning") {
                     blink_on.set(false);
-                    headroom_btn.remove_css_class("headroom-warning");
+                    set_safe.remove_css_class("headroom-warning");
                 }
                 ControlFlow::Continue
             });

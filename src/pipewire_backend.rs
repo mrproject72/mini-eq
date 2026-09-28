@@ -12,7 +12,9 @@ use pipewire::spa::pod::builder::Builder;
 use pipewire::{Error, context::ContextRc, core::CoreRc, loop_::Timeout, main_loop::MainLoopRc};
 use pipewire_sys as pw_sys;
 
-use crate::core::{EqBand, FILTER_OUTPUT_SUFFIX, VIRTUAL_SINK_BASE};
+use crate::core::{
+    EQ_PREAMP_MAX_DB, EQ_PREAMP_MIN_DB, EqBand, FILTER_OUTPUT_SUFFIX, VIRTUAL_SINK_BASE,
+};
 use crate::filter_chain;
 use crate::routing::{OutputRoute, RoutingEngine};
 
@@ -289,6 +291,13 @@ impl PipeWireBackend {
     ///
     /// Returns `Ok(false)` if the live node proxy is not available yet (caller
     /// should fall back to a module reload).
+    /// True once the live filter node proxy has been captured. The proxy
+    /// arrives asynchronously AFTER the module load completes, so callers
+    /// must not treat "no proxy" as a live-push failure.
+    pub fn has_live_node(&self) -> bool {
+        self.filter_node.borrow().is_some()
+    }
+
     pub fn apply_live_controls(&self, eq_enabled: bool) -> Result<bool, Error> {
         let node_borrow = self.filter_node.borrow();
         let node = match node_borrow.as_ref() {
@@ -369,8 +378,16 @@ impl PipeWireBackend {
         // coefficients, not the node label, so a type change is a live push
         // just like Freq/Q/Gain. The graph topology never changes and the
         // engine is never restarted, so the sink node id (and therefore the
-        // app streams' routing) stays stable across every edit. If the live
-        // node proxy isn't available yet, fall back to a one-time reload.
+        // app streams' routing) stays stable across every edit.
+        //
+        // Startup grace: the live node proxy is captured asynchronously after
+        // the module load. Previously a push that landed before the proxy
+        // existed fell through to a full module unload+reload, cutting the
+        // audio a *second* time right after startup. The module was just
+        // loaded with the correct bands, so there is nothing to redo.
+        if !self.has_live_node() {
+            return Ok(());
+        }
         match self.apply_live_controls(true) {
             Ok(true) => Ok(()),
             _ => {
@@ -506,7 +523,9 @@ impl PipeWireBackend {
     }
 
     pub fn set_preamp(&mut self, gain_db: f64) -> Result<(), Error> {
-        self.preamp_gain = gain_db.clamp(-24.0, 6.0);
+        // Use the shared bounds, not a literal: the Auto-Safe budget depends on
+        // the floor matching `core::EQ_PREAMP_MIN_DB`.
+        self.preamp_gain = gain_db.clamp(EQ_PREAMP_MIN_DB, EQ_PREAMP_MAX_DB);
         info!("Preamp gain set to {} dB", self.preamp_gain);
         Ok(())
     }

@@ -14,8 +14,15 @@ use std::rc::Rc;
 /// `selection_changed_callback` receives the index of the band the user just
 /// selected; the owner is responsible for clearing the other faders (a fader
 /// cannot do that itself without holding borrows on its siblings).
+///
+/// `gain_changed` is the owner-authoritative gain request handed to every
+/// fader: it returns the gain the band may actually use. It MUST be threaded
+/// all the way down — a stub here would silently disable peak safety for all
+/// fader gestures (drag/scroll/keys) while leaving the editor spin clamped,
+/// which is exactly how stacked shelves escaped the limit.
 pub fn build_band_faders(
     visible_bands: usize,
+    gain_changed: Rc<dyn Fn(usize, f64) -> f64>,
     selection_changed_callback: Rc<dyn Fn(usize)>,
 ) -> (
     gtk4::ScrolledWindow,
@@ -60,6 +67,7 @@ pub fn build_band_faders(
             q,
             filter_type,
             i < DEFAULT_ACTIVE_BANDS,
+            gain_changed.clone(),
             selection_changed_callback.clone(),
         );
         faders.push(band.fader.clone());
@@ -70,11 +78,144 @@ pub fn build_band_faders(
     (scrolled, faders)
 }
 
+/// The main-window output control row: Auto-Safe, A/B compare, preamp,
+/// live peak meter and the Set Safe button.
+///
+/// Every control is reparented from the sidebar panels, so the sidebar can
+/// hold only output-device settings. `Set Safe` is shown only when the
+/// curve is at risk (see `HeadroomPanel::update_peak`), and it — not the
+/// header icon — carries the clipping alert.
+/// Below this row width the captions are dropped and each control falls
+/// back to its tooltip, so the row stays compact instead of being cut.
+const OUTPUT_ROW_COMPACT_WIDTH: i32 = 1000;
+
+fn build_output_control_row(utility: &UtilityPane) -> adw::WrapBox {
+    // WrapBox rather than a plain Box: at narrow widths items wrap onto a
+    // second line instead of being clipped, so nothing is ever cut off.
+    // Explicit child/line spacing: the WrapBox default is tight enough that
+    // the switches read as one merged blob once the row wraps.
+    let row = adw::WrapBox::builder()
+        .child_spacing(14)
+        .line_spacing(12)
+        .build();
+    row.set_orientation(gtk4::Orientation::Horizontal);
+    row.set_css_classes(&["output-control-row"]);
+    row.set_halign(gtk4::Align::Center);
+    row.set_hexpand(true);
+    row.set_valign(gtk4::Align::Center);
+
+    let headroom = utility.headroom.borrow();
+    let mut labels: Vec<gtk4::Label> = Vec::new();
+
+    let auto_safe_item = control(
+        "Auto-Safe",
+        "Let the output preamp follow the peak automatically",
+        &headroom.auto_safe_switch,
+        &mut labels,
+    );
+    let smooth_item = control(
+        "Smooth",
+        "Dragging one band drags its neighbours so the curve stays smooth",
+        &headroom.smooth_switch,
+        &mut labels,
+    );
+    let smooth_width_item = control(
+        "Width",
+        "How many bands move when you drag one",
+        &headroom.smooth_width_scale,
+        &mut labels,
+    );
+    let preamp_item = control(
+        "Preamp",
+        "Output preamp trim (dB)",
+        &headroom.preamp_scale,
+        &mut labels,
+    );
+
+    row.append(&auto_safe_item);
+    row.append(&smooth_item);
+    // Only meaningful while Smooth is on; hidden otherwise (see below).
+    row.append(&smooth_width_item);
+    // Hidden while Auto-Safe owns the preamp.
+    row.append(&preamp_item);
+
+    // Status LED: 18px instead of the old ~90px bar meter, which was what
+    // forced the row onto a second line with every switch active.
+    row.append(&headroom.led_area);
+
+    headroom.peak_label.set_valign(gtk4::Align::Center);
+    row.append(&headroom.peak_label);
+
+    headroom.set_safe_button.set_valign(gtk4::Align::Center);
+    row.append(&headroom.set_safe_button);
+
+    // --- visibility rules (self-contained) -------------------------------
+    // Width only applies while Smooth is on; the preamp control is hidden
+    // while Auto-Safe owns it, rather than sitting there greyed out.
+    {
+        let width_item = smooth_width_item.clone();
+        headroom.smooth_switch.connect_state_set(move |_sw, on| {
+            width_item.set_visible(on);
+            glib::Propagation::Proceed
+        });
+    }
+    {
+        let preamp_item = preamp_item.clone();
+        headroom.auto_safe_switch.connect_state_set(move |_sw, on| {
+            preamp_item.set_visible(!on);
+            glib::Propagation::Proceed
+        });
+    }
+    smooth_width_item.set_visible(headroom.smooth.get());
+    preamp_item.set_visible(!headroom.auto_safe.get());
+
+    // Drop the captions when the row gets tight. Every control carries its
+    // own tooltip, so the names are still reachable.
+    {
+        let labels: Rc<Vec<gtk4::Label>> = Rc::new(labels);
+        // Guard so the visibility change we trigger does not re-enter this
+        // handler and thrash the layout.
+        let current = Rc::new(std::cell::Cell::new(false));
+        row.connect_notify_local(Some("width"), move |r, _| {
+            let compact = r.width() > 0 && r.width() < OUTPUT_ROW_COMPACT_WIDTH;
+            if current.get() == compact {
+                return;
+            }
+            current.set(compact);
+            for label in labels.iter() {
+                label.set_visible(!compact);
+            }
+        });
+    }
+
+    row
+}
+
+/// A captioned control in the output row. The tooltip is set on the whole
+/// item so it still identifies the control once the caption is dropped.
+fn control(
+    caption: &str,
+    tooltip: &str,
+    widget: &impl IsA<gtk4::Widget>,
+    labels: &mut Vec<gtk4::Label>,
+) -> gtk4::Box {
+    let box_ = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+    box_.set_tooltip_text(Some(tooltip));
+    let label = gtk4::Label::new(Some(caption));
+    label.set_valign(gtk4::Align::Center);
+    label.set_css_classes(&["metric-title"]);
+    box_.append(&label);
+    box_.append(widget);
+    labels.push(label);
+    box_
+}
+
 /// Build the main content layout with left panel (band faders) and right panel (utility).
 pub fn build_main_layout(
     utility: &UtilityPane,
     editor: &crate::window_band_editor::BandEditor,
     visible_bands: usize,
+    gain_changed: Rc<dyn Fn(usize, f64) -> f64>,
     selection_changed_callback: Rc<dyn Fn(usize)>,
 ) -> (
     adw::OverlaySplitView,
@@ -85,20 +226,15 @@ pub fn build_main_layout(
 
     main_box.append(utility.graph.borrow().widget());
 
-    // Auto-Safe control: centered between the spectrum analyzer and the
-    // fader row. The switch widget + wiring live on the Headroom panel and
-    // are placed here for quick, prominent access.
-    let auto_safe_switch = utility.headroom.borrow().auto_safe_switch.clone();
-    let auto_safe_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
-    auto_safe_row.set_halign(gtk4::Align::Center);
-    auto_safe_row.set_css_classes(&["auto-safe-row"]);
-    let auto_safe_label = gtk4::Label::new(Some("Auto-Safe"));
-    auto_safe_label.set_valign(gtk4::Align::Center);
-    auto_safe_row.append(&auto_safe_label);
-    auto_safe_row.append(&auto_safe_switch);
-    main_box.append(&auto_safe_row);
+    // Output control row: the headroom/bypass controls the user reaches for
+    // constantly, on ONE row between the spectrum and the faders. These
+    // widgets stay owned by HeadroomPanel/UtilityPane and are reparented
+    // here, which frees the sidebar to be a pure Output (device) panel.
+    let control_row = build_output_control_row(utility);
+    main_box.append(&control_row);
 
-    let (band_scrolled, faders) = build_band_faders(visible_bands, selection_changed_callback);
+    let (band_scrolled, faders) =
+        build_band_faders(visible_bands, gain_changed, selection_changed_callback);
     main_box.append(&band_scrolled);
 
     main_box.append(editor.widget());

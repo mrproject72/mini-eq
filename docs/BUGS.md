@@ -33,6 +33,34 @@
 
 ## Known Issues
 
+- **Auto-Safe lowers the volume noticeably — EXPECTED BEHAVIOUR, not a bug.**
+  With Auto-Safe engaged the whole output is attenuated by
+  **`1 dB + your maximum EQ boost`**, because
+  `auto_safe_preamp_db = (target − curve_peak).clamp(EQ_PREAMP_MIN_DB, 0)`
+  with `target = −1 dBFS`.
+
+  | max EQ boost | preamp set | output drop | perceived loudness |
+  |---|---|---|---|
+  | +3 dB | −4.0 dB | 4 dB | ~76% |
+  | +6 dB | −7.0 dB | 7 dB | ~62% |
+  | +10 dB | −11.0 dB | 11 dB | ~47% |
+
+  This is correct and unavoidable here: there is **no sample-accurate
+  limiter in the PipeWire filter chain**, so the only way to guarantee no
+  clipping is feed-forward — assume material hits full scale at the most
+  boosted frequency and reserve headroom for it in advance. A `+6 dB`
+  boost at 100 Hz therefore attenuates the entire spectrum, even though
+  only 100 Hz is at risk; that is the cost of a single global preamp.
+
+  **Do not replace this with a live/monitor-driven preamp.** Tried and
+  reverted (see `docs/2026-09-28-updates.md`): the UI tick is 33 ms and
+  program transients are 1–10 ms, so a feedback loop clips before it can
+  even observe the transient. Monitor-on + Auto-Safe clipped; monitor-off
+  (feed-forward) worked.
+
+  Practical mitigation: keep the maximum boost modest — the drop tracks it
+  1:1. Reclaiming the loudness properly requires a real limiter in the
+  filter chain, not a faster UI loop.
 - **Fader bottom slightly clipped at some window sizes (minor).** The fader's
   bottom edge (Q value "1.50" + the box's bottom border) can still be a few
   px short of fully visible at certain window heights. The band_scrolled's
