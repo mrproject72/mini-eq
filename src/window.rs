@@ -934,6 +934,31 @@ impl MiniEqWindow {
             });
         }
 
+        // --- Tear down routing BEFORE the backend goes away.
+        // Without this, closing the window unloads the filter-chain module
+        // and destroys mini_eq_sink while every playback stream still has
+        // target.node pointing at it. The audio then has nowhere to go and
+        // the user hears silence until each app is restarted. This is the
+        // "audio stops when I close the app" bug.
+        {
+            let backend_close = backend.clone();
+            window.connect_close_request(move |_win| {
+                log::info!("shutdown: close-request received, unrouting before teardown");
+                if let Some(be) = backend_close.borrow_mut().as_mut() {
+                    // Unroute first so streams are handed back to the real
+                    // default output while the metadata object is still
+                    // alive, then drop the monitor.
+                    if let Err(e) = be.unroute_all() {
+                        log::warn!("shutdown: unroute failed: {}", e);
+                    }
+                    if be.monitor_enabled() {
+                        be.stop_monitor();
+                    }
+                }
+                glib::Propagation::Proceed
+            });
+        }
+
         // Monitor switch: start/stop the output spectrum capture. Mirrors
         // upstream `set_analyzer_enabled` -> `ensure_output_analyzer`, where
         // the analyzer captures the controller's output sink (the sink the

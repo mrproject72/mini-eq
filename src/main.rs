@@ -305,6 +305,33 @@ fn launch_gui(_background_mode: bool, auto_route: bool, output_sink: Option<Stri
         window.present();
     });
 
+    // Clean up PipeWire routing when the app exits.
+    //
+    // The window's close-request handler covers the ordinary case, but the
+    // application `shutdown` signal also fires on last-window-closed and any
+    // other path that ends the main loop. This matters because the stream
+    // targets live in PipeWire's shared `default` metadata: if the app dies
+    // with playback streams still pointed at mini_eq_sink, those values
+    // outlive the app, the sink gets destroyed with the filter-chain, and
+    // every player goes silent -- the "audio stops when I close the app"
+    // bug. Unrouting hands the streams back to the real default output.
+    //
+    // Idempotent with the window handler, so running both is harmless.
+    {
+        let backend_shutdown = shared_backend.clone();
+        app.connect_shutdown(move |_app| {
+            if let Some(be) = backend_shutdown.borrow_mut().as_mut() {
+                log::info!("app shutdown: releasing playback streams from the EQ");
+                if let Err(e) = be.unroute_all() {
+                    log::warn!("app shutdown: unroute failed: {}", e);
+                }
+                if be.monitor_enabled() {
+                    be.stop_monitor();
+                }
+            }
+        });
+    }
+
     let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
     let _ = app.run_with_args_os(&args);
 }
