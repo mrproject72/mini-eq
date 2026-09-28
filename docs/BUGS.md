@@ -2,6 +2,24 @@
 
 ## Open Bugs
 
+- **The entire app menu is dead — no GActions are registered anywhere.**
+  `create_menu_model()` wires `app.about`, `app.preferences` and
+  `app.quit`, but `grep` finds **zero** `create_action` / `add_action`
+  calls in the whole codebase. Every hamburger-menu item is a no-op.
+  `window_preferences.rs` is actually fully functional (it loads and
+  saves background mode, start-at-login and the active-at-login flag) —
+  it is simply **unreachable** because nothing handles `app.preferences`.
+  Fix: register the three actions on the window/app and present the
+  existing dialog. Small job, high user-visible payoff.
+- **Appearance is applied but never persisted.** `window.rs` calls
+  `AppearanceSettings::load()` + `apply_appearance_preference`, but there
+  are **0** call sites for `AppearanceSettings::save` / `save_appearance`,
+  and `appearance.rs::sync_appearance_css_class` has no callers. Upstream
+  persists the `appearance` key.
+- **Window position is not restored.** `window_state.rs` has no
+  `set_default_size` / move logic for position; only size and the monitor
+  geometry fallback are handled.
+
 - **Monitor settings popover sliders unwired; monitor-enabled state not persisted.** The smoothing / display-gain sliders and `settings.rs::load_monitor_enabled`/`save_monitor_enabled` exist but nothing calls them. (Also: freeze switch missing window-side.)
 - **No runtime re-target on default-sink change.** The monitor and filter-chain keep the sink they were started with; switching the system default output does not follow.
 - **No `node.dont-move` / foreign-target guards on the EQ sink.** WirePlumber or other tools can re-link around it.
@@ -11,7 +29,8 @@
 - `window_autoeq.rs` and `window_preferences.rs` are placeholder dialogs, not functional.
 - `window_state.rs` does not restore window position.
 - Preset lifecycle incomplete: no revert/reapply, import/export/delete file monitoring, or output-preset auto-load on device switch.
-- No Flatpak manifest, no GNOME Shell extension, no CI workflow present in this repo.
+- No Flatpak manifest, no GNOME Shell extension. (CI **does** exist at
+  `.github/workflows/ci.yml` — an earlier note claiming otherwise was stale.)
 
 ## Fixed Bugs
 
