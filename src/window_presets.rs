@@ -14,6 +14,7 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
+use adw::prelude::AdwDialogExt as _;
 use gtk4::prelude::*;
 
 use crate::autoeq::parse_apo_file;
@@ -27,6 +28,8 @@ pub struct PresetPanel {
     pub container: gtk4::Box,
     pub list_box: gtk4::ListBox,
     pub add_button: gtk4::Button,
+    /// Rename the selected custom preset.
+    pub rename_button: gtk4::Button,
     pub remove_button: gtk4::Button,
     pub import_button: gtk4::Button,
     pub export_button: gtk4::Button,
@@ -51,6 +54,8 @@ impl PresetPanel {
         add_button.set_tooltip_text(Some("Add a new preset from the current EQ"));
         let remove_button = gtk4::Button::from_icon_name("list-remove-symbolic");
         remove_button.set_tooltip_text(Some("Remove the selected custom preset"));
+        let rename_button = gtk4::Button::from_icon_name("document-edit-symbolic");
+        rename_button.set_tooltip_text(Some("Rename the selected custom preset"));
         let import_button = gtk4::Button::from_icon_name("document-open-symbolic");
         import_button.set_tooltip_text(Some("Import an APO (.apo/.txt) preset..."));
         let export_button = gtk4::Button::from_icon_name("document-save-as-symbolic");
@@ -72,6 +77,7 @@ impl PresetPanel {
         header.append(&spacer);
 
         header.append(&add_button);
+        header.append(&rename_button);
         header.append(&remove_button);
         header.append(&import_button);
         header.append(&export_button);
@@ -100,6 +106,7 @@ impl PresetPanel {
             container,
             list_box,
             add_button,
+            rename_button,
             remove_button,
             import_button,
             export_button,
@@ -123,17 +130,56 @@ impl PresetPanel {
         // --- Add: create a new custom preset from the current EQ state.
         let panel_clone = panel.clone();
         panel.borrow().add_button.connect_clicked(move |_| {
-            let list_box = panel_clone.borrow().list_box.clone();
-            let count = count_custom_children(&list_box);
-            let name = format!("preset_{}", count + 1);
-            let sanitized = sanitize_preset_name(&name);
-            let path = preset_path_for_name(&sanitized);
-            let (bands, preamp) = {
+            let (bands, preamp, list_box) = {
                 let p = panel_clone.borrow();
-                (p.current_bands.clone(), p.current_preamp_db)
+                (
+                    p.current_bands.clone(),
+                    p.current_preamp_db,
+                    p.list_box.clone(),
+                )
             };
-            let _ = save_preset_to_file(&path, &bands, preamp);
-            refresh_preset_list(&list_box);
+            // Suggest the old auto-numbered name as a starting point, but
+            // let the user actually name the preset.
+            let suggested = format!("preset_{}", count_custom_children(&list_box) + 1);
+            prompt_preset_name("Save Preset", "Save", &suggested, move |name| {
+                let sanitized = sanitize_preset_name(&name);
+                let path = preset_path_for_name(&sanitized);
+                let _ = save_preset_to_file(&path, &bands, preamp);
+                refresh_preset_list(&list_box);
+            });
+        });
+
+        // --- Rename the selected CUSTOM preset (built-ins are safe).
+        let panel_clone = panel.clone();
+        panel.borrow().rename_button.connect_clicked(move |_| {
+            let (old_name, list_box) = {
+                let p = panel_clone.borrow();
+                let Some(row) = p.list_box.selected_row() else {
+                    return;
+                };
+                let Some(name) = row_name(&row) else {
+                    return;
+                };
+                if is_builtin_preset(&name) {
+                    return;
+                }
+                (name, p.list_box.clone())
+            };
+            let old_for_cmp = old_name.clone();
+            prompt_preset_name("Rename Preset", "Rename", &old_name, move |new_name| {
+                let sanitized = sanitize_preset_name(&new_name);
+                let old_path = preset_path_for_name(&old_for_cmp);
+                let new_path = preset_path_for_name(&sanitized);
+                if old_path == new_path {
+                    return;
+                }
+                // Rename the file itself rather than re-saving the in-memory
+                // bands: that preserves the stored preset exactly, including
+                // any fields this panel does not model.
+                if std::fs::rename(&old_path, &new_path).is_ok() {
+                    refresh_preset_list(&list_box);
+                }
+            });
         });
 
         // --- Remove: delete the selected CUSTOM preset (built-ins are safe).
@@ -401,6 +447,75 @@ fn load_preset_by_name(name: &str) -> anyhow::Result<(f64, Vec<crate::core::EqBa
     }
     let path = preset_path_for_name(name);
     load_preset_from_file(&path)
+}
+
+/// Ask the user for a preset name.
+///
+/// GTK4 has no synchronous modal, so the confirmed name is delivered
+/// through `on_ok`. An empty/whitespace name is rejected in place rather
+/// than silently saving as something the user did not type.
+///
+/// `AdwDialog` has no `add_action` (unlike `GtkDialog`), so the buttons
+/// live inside the content box, and `set_title` takes a plain `&str`
+/// rather than an `Option`.
+fn prompt_preset_name(
+    title: &str,
+    ok_label: &str,
+    initial: &str,
+    on_ok: impl Fn(String) + 'static,
+) {
+    let dialog = adw::Dialog::new();
+    dialog.set_title(title);
+    dialog.set_content_width(380);
+
+    let entry = gtk4::Entry::new();
+    entry.set_text(initial);
+    entry.set_placeholder_text(Some("Preset name"));
+    entry.set_activates_default(true);
+
+    let cancel = gtk4::Button::with_label("Cancel");
+    let ok = gtk4::Button::with_label(ok_label);
+    ok.add_css_class("suggested-action");
+
+    let buttons = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+    buttons.set_halign(gtk4::Align::End);
+    buttons.append(&cancel);
+    buttons.append(&ok);
+
+    let content = gtk4::Box::new(gtk4::Orientation::Vertical, 12);
+    content.set_margin_start(18);
+    content.set_margin_end(18);
+    content.set_margin_top(18);
+    content.set_margin_bottom(18);
+    content.append(&entry);
+    content.append(&buttons);
+    dialog.set_child(Some(&content));
+    dialog.set_default_widget(Some(&ok));
+
+    {
+        let dialog_cancel = dialog.clone();
+        cancel.connect_clicked(move |_| {
+            dialog_cancel.close();
+        });
+    }
+    {
+        let entry_ok = entry.clone();
+        let dialog_ok = dialog.clone();
+        ok.connect_clicked(move |_| {
+            let name = entry_ok.text().trim().to_string();
+            if name.is_empty() {
+                entry_ok.grab_focus();
+                return;
+            }
+            on_ok(name);
+            dialog_ok.close();
+        });
+    }
+
+    // AdwDialog has no `presented` signal; point its focus at the entry so
+    // typing starts immediately.
+    dialog.set_focus(Some(&entry));
+    dialog.present(None::<&gtk4::Widget>);
 }
 
 /// Extract the preset name stored on a list row (set by `refresh_preset_list`).

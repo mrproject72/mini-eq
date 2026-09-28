@@ -14,12 +14,11 @@
   (`dbus_control.rs:398 handler.analyzer_levels()`). So the pipeline exists
   end-to-end except for the last hop into the panel. Fix: feed
   `utility.analyzer.update(levels)` from the existing 33 ms tick.
-- **Cannot name a new preset or rename one.** `PresetPanel` has
-  `load_library_preset`, `reset_to_neutral`, `revert_to_baseline`,
-  `refresh_list`, `start_file_monitoring` — but **no save-as / rename**.
-  Presets can be loaded and reverted but never created with a chosen name or
-  renamed. Needs a name entry (dialog or inline) wired to
-  `preset_storage_dir()`.
+- ~~**Cannot name a new preset or rename one.**~~ **FIXED.** Add now
+  prompts for a name (suggesting the old `preset_N` as a default) and a
+  Rename button was added to the toolbar. Rename uses `fs::rename` on the
+  preset file so the stored content is preserved exactly rather than
+  re-serialised from the in-memory bands.
 
 ### P2 — previously recorded
 
