@@ -4,7 +4,7 @@ use gtk4::cairo::Context;
 use gtk4::prelude::*;
 
 use crate::core::{
-    EQ_FREQUENCY_MAX_HZ, EQ_FREQUENCY_MIN_HZ, FilterType, GRAPH_DB_MAX, GRAPH_DB_MIN, SAMPLE_RATE,
+    EQ_FREQUENCY_MAX_HZ, EQ_FREQUENCY_MIN_HZ, GRAPH_DB_MAX, GRAPH_DB_MIN, SAMPLE_RATE,
     total_response_db_at_frequencies,
 };
 
@@ -39,9 +39,10 @@ impl GraphMode {
 #[derive(Debug, Clone)]
 pub struct EqGraphState {
     pub preamp_db: f64,
-    pub frequency: f64,
-    pub q: f64,
-    pub filter_type: FilterType,
+    // NOTE: this used to carry `frequency`, `q` and `filter_type` for the
+    // selected band. They were written on every tick and read by nothing --
+    // both the response curve and the selected-band marker derive what
+    // they need from `bands` + `selected_band` instead. Removed.
     pub selected_band: Option<usize>,
     pub bands: Vec<crate::core::EqBand>,
     pub analyzer_levels: Vec<f64>,
@@ -52,9 +53,6 @@ impl EqGraphState {
     pub fn new() -> Self {
         Self {
             preamp_db: 0.0,
-            frequency: 1000.0,
-            q: 1.0,
-            filter_type: FilterType::Bell,
             selected_band: None,
             bands: Vec::new(),
             analyzer_levels: Vec::new(),
@@ -181,17 +179,11 @@ impl EqGraph {
     pub fn update(
         &mut self,
         preamp_db: f64,
-        frequency: f64,
-        q: f64,
-        filter_type: FilterType,
         bands: &[crate::core::EqBand],
         analyzer_levels: &[f64],
     ) {
         let mut s = self.state.borrow_mut();
         s.preamp_db = preamp_db;
-        s.frequency = frequency;
-        s.q = q;
-        s.filter_type = filter_type;
         s.bands = bands.to_vec();
         s.analyzer_levels = analyzer_levels.to_vec();
         // Queue the specific drawing areas directly. `overlay.queue_draw()`

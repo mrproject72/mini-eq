@@ -842,17 +842,6 @@ impl MiniEqWindow {
                 }
                 let preamp_db = headroom.borrow().preamp_value();
                 {
-                    // Overlay reflects the *selected* band's actual controls,
-                    // not a hardcoded Bell. Previously the type was pinned to
-                    // Bell so switching filter types never changed the curve.
-                    let selected = band_faders.iter().find(|f| f.borrow().selected);
-                    let (sel_freq, sel_q, sel_type) = match selected {
-                        Some(f) => {
-                            let f = f.borrow();
-                            (f.frequency, f.q_value, f.filter_type)
-                        }
-                        None => (1000.0, 1.0, crate::core::FilterType::Bell),
-                    };
                     let mut g = graph.borrow_mut();
                     // Feed live spectrum from the output monitor (empty when
                     // the monitor is off, so the overlay draws nothing).
@@ -861,14 +850,7 @@ impl MiniEqWindow {
                         .as_ref()
                         .map(|be| be.monitor_levels())
                         .unwrap_or_default();
-                    g.update(
-                        preamp_db,
-                        sel_freq,
-                        sel_q,
-                        sel_type,
-                        &bands,
-                        &analyzer_levels,
-                    );
+                    g.update(preamp_db, &bands, &analyzer_levels);
                 }
                 // Live loudness readout in the monitor strip (short-term LUFS).
                 if let Some(be) = backend.borrow().as_ref() {

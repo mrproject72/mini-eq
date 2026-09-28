@@ -906,35 +906,6 @@ pub fn interleaved_f32le_bytes_to_mono(payload: &[u8], channels: usize) -> Vec<f
     mono
 }
 
-/// Split interleaved f32 bytes into left/right channel payloads.
-pub fn interleaved_f32le_bytes_to_channel_payloads(
-    payload: &[u8],
-    channels: usize,
-) -> (Vec<f32>, Vec<f32>) {
-    let channel_count = channels.max(1);
-    let frame_size = ANALYZER_SAMPLE_WIDTH_BYTES * channel_count;
-    let usable = payload.len() - (payload.len() % frame_size);
-    let frame_count = usable / frame_size;
-
-    if channel_count == 1 {
-        let mono = interleaved_f32le_bytes_to_mono(payload, 1);
-        return (mono.clone(), mono);
-    }
-
-    let mut left = Vec::with_capacity(frame_count);
-    let mut right = Vec::with_capacity(frame_count);
-
-    for i in 0..frame_count {
-        let base = i * frame_size;
-        let l_bytes = payload[base..base + 4].try_into().unwrap();
-        let r_bytes = payload[base + 4..base + 8].try_into().unwrap();
-        left.push(f32::from_le_bytes(l_bytes));
-        right.push(f32::from_le_bytes(r_bytes));
-    }
-
-    (left, right)
-}
-
 // ---------------------------------------------------------------------------
 // FFT computation
 // ---------------------------------------------------------------------------

@@ -66,7 +66,18 @@
   display-gain and freeze are all wired to the backend now.** The smoothing / display-gain sliders and `settings.rs::load_monitor_enabled`/`save_monitor_enabled` exist but nothing calls them. (Also: freeze switch missing window-side.)
 - **No runtime re-target on default-sink change.** The monitor and filter-chain keep the sink they were started with; switching the system default output does not follow.
 - **No `node.dont-move` / foreign-target guards on the EQ sink.** WirePlumber or other tools can re-link around it.
-- Dead code: `analyzer.rs::{spectrum_db_values_to_levels, interleaved_f32le_bytes_to_channel_payloads, smooth_power_values}` and several `pipewire_backend.rs`/`routing.rs` accessors have no non-test callers.
+- ~~Dead code in `analyzer.rs`.~~ **Partially cleaned — and two of the
+  three reported items were NOT dead.** Verified before removing:
+  `spectrum_db_values_to_levels` is used by `display_levels()` and
+  `smooth_power_values` is used by the smoothing path. Only
+  `interleaved_f32le_bytes_to_channel_payloads` was genuinely
+  unreferenced, and that one was removed.
+- ~~`EqGraphState` carries three dead fields.~~ **FIXED.** `frequency`,
+  `q` and `filter_type` were written every tick and read by nothing (the
+  curve and the selected-band marker both derive from `bands` +
+  `selected_band`). Removed the fields, the writes, the `update()`
+  parameters, and the `sel_freq`/`sel_q`/`sel_type` computation in
+  `window.rs` that existed only to feed them.
 - **`EqGraphState` carries three dead fields.** `frequency`, `q`, and `filter_type` are written by `EqGraph::update` on every tick but never read; the response curve and the selected-band marker both derive their values from `bands`/`selected_band` instead. Either drop the fields or use them for the marker overlay.
 - **Appearance is applied but never persisted.** `window.rs` calls `AppearanceSettings::load()` and `apply_appearance_preference`, but nothing calls `AppearanceSettings::save()`, and `settings.rs::{load_appearance, save_appearance}` and `appearance.rs::sync_appearance_css_class` have no callers. Upstream persists the `appearance` key via `settings.py`.
 - `window_autoeq.rs` and `window_preferences.rs` are placeholder dialogs, not functional.
