@@ -33,6 +33,18 @@
 
 ## Known Issues
 
+- **App ID still uses upstream's namespace (`io.github.bhack.mini-eq`) —
+  needs a decision before any public release.** `core::APP_ID`,
+  `analyzer::ANALYZER_APPLICATION_ID`, the D-Bus service name
+  (`io.github.bhack.MiniEq.Control`) and the autostart file
+  (`io.github.bhack.mini-eq.desktop`) all identify as the **original
+  Python project**. Consequences: it collides with a real upstream install
+  on the same machine (single-instance lock, D-Bus name ownership, desktop
+  file, autostart entry) and it misrepresents authorship. Renaming touches
+  config dir, D-Bus interface, autostart and window-matching, so it was
+  deliberately **not** changed as part of the display-level rename to
+  "mini-eq RR". Decide the new ID (e.g. `io.github.mrproject72.mini_eq_rr`)
+  and migrate config deliberately.
 - **Auto-Safe lowers the volume noticeably — EXPECTED BEHAVIOUR, not a bug.**
   With Auto-Safe engaged the whole output is attenuated by
   **`1 dB + your maximum EQ boost`**, because

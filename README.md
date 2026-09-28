@@ -1,8 +1,11 @@
-# Mini EQ — Rust Rewrite
+# mini-eq RR (Rust Rewrite)
 
 Compact PipeWire system-wide parametric equalizer for Linux desktops.
 
-This is a Rust rewrite of [mini-eq](https://github.com/bhack/mini-eq) (Python/GTK) to eliminate the 30% CPU usage caused by Python's GIL and real-time audio processing overhead.
+**mini-eq RR** is a from-scratch Rust rewrite of [mini-eq](https://github.com/bhack/mini-eq)
+(Python/GTK/PipeWire), built to eliminate the ~30% CPU cost of the Python
+GIL under real-time audio processing. Same feature set, native speed, no
+interpreter.
 
 ## Features
 

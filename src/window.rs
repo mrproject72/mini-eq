@@ -107,7 +107,7 @@ impl MiniEqWindow {
             window_state::MIN_WINDOW_WIDTH,
             window_state::MIN_WINDOW_HEIGHT,
         );
-        window.set_title(Some("Mini EQ"));
+        window.set_title(Some("mini-eq RR"));
 
         // Load CSS styling
         style::load_style();
@@ -134,7 +134,7 @@ impl MiniEqWindow {
 
         // Build header bar
         let header_bar = adw::HeaderBar::new();
-        let window_title = adw::WindowTitle::new("Mini EQ", "");
+        let window_title = adw::WindowTitle::new("mini-eq RR", "Rust Rewrite");
         header_bar.set_title_widget(Some(&window_title));
 
         // The output-device selector now lives in the Headroom panel's

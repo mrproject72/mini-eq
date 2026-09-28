@@ -2,7 +2,7 @@
 name = "mini-eq"
 version = "0.9.0"
 edition = "2024"
-description = "Compact PipeWire system-wide parametric equalizer for Linux desktops."
+description = "mini-eq RR — Rust rewrite of the mini-eq PipeWire system-wide parametric equalizer."
 license = "GPL-3.0-or-later"
 authors = ["bhack"]
 keywords = ["audio", "desktop", "equalizer", "pipewire", "gtk", "linux", "parametric-eq"]
