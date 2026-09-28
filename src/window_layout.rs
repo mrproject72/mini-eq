@@ -166,17 +166,20 @@ fn build_output_control_row(utility: &UtilityPane) -> adw::WrapBox {
     set_safe_cell.append(&headroom.set_safe_button);
     row.append(&set_safe_cell);
 
-    // The preamp control is hidden while Auto-Safe owns it. The CELL stays
-    // its fixed width, so nothing shifts.
+    // The preamp stays exactly where it is while Auto-Safe owns it and is
+    // merely insensitive. Hiding it removed its content from the cell, and
+    // even with the cell floor held the row's centred layout shifted as the
+    // remaining items re-flowed. Disabling keeps every pixel put.
     {
         let preamp = headroom.preamp_spin.clone();
         headroom.auto_safe_switch.connect_state_set(move |_sw, on| {
-            preamp.set_visible(!on);
+            preamp.set_sensitive(!on);
             glib::Propagation::Proceed
         });
     }
-    preamp_item.set_visible(true);
-    headroom.preamp_spin.set_visible(!headroom.auto_safe.get());
+    headroom
+        .preamp_spin
+        .set_sensitive(!headroom.auto_safe.get());
 
     // Drop the captions when the row gets tight. Every control carries its
     // own tooltip, so the names are still reachable.

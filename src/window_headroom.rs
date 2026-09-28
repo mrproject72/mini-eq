@@ -18,6 +18,9 @@ pub const AUTO_SAFE_TARGET_DBFS: f64 = -1.0;
 
 /// Fixed width of the Set Safe button so label changes never reflow the row.
 const SET_SAFE_BUTTON_WIDTH_PX: i32 = 96;
+/// Char width of the numeric peak readout, sized for the widest
+/// string it can render so text changes never resize the row.
+const PEAK_LABEL_WIDTH_CHARS: i32 = 11;
 /// Width of the smooth spread slide bar inside the popover.
 const SMOOTH_WIDTH_SCALE_W_PX: i32 = 150;
 
@@ -132,6 +135,15 @@ impl HeadroomPanel {
         // and the prefix was costing ~40px of row width.
         let peak_label = gtk4::Label::new(Some("-- dB"));
         peak_label.set_css_classes(&["numeric"]);
+        // The text changes every tick and by different amounts
+        // ("-- dB" / "-12.3 dBFS" / "+6.0 dB"). With no width floor the
+        // label resized itself each time, which changed the status cell
+        // width and -- because the output row is centred -- slid every
+        // other control sideways. A fixed char width pins it.
+        peak_label.set_width_chars(PEAK_LABEL_WIDTH_CHARS);
+        peak_label.set_max_width_chars(PEAK_LABEL_WIDTH_CHARS);
+        peak_label.set_xalign(0.0);
+        peak_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
         peak_label.set_tooltip_text(Some("Estimated output peak (dBFS)"));
 
         let state_label = gtk4::Label::new(Some("Safe"));
@@ -177,7 +189,7 @@ impl HeadroomPanel {
                 auto_safe.set(on);
                 // The auto algorithm owns the preamp while enabled, so the
                 // manual control is disabled to avoid fighting it.
-                preamp_ctl.set_visible(!on);
+                preamp_ctl.set_sensitive(!on);
                 glib::Propagation::Proceed
             });
         }
