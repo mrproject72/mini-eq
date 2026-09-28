@@ -98,7 +98,7 @@ const CELL_W_SMOOTH: i32 = 100;
 const CELL_W_AUTO_SAFE: i32 = 128;
 const CELL_W_PREAMP: i32 = 130;
 const CELL_W_STATUS: i32 = 112;
-const CELL_W_SET_SAFE: i32 = 92;
+const CELL_W_SET_SAFE: i32 = 100;
 
 fn build_output_control_row(utility: &UtilityPane) -> adw::WrapBox {
     // WrapBox rather than a plain Box: at narrow widths items wrap onto a

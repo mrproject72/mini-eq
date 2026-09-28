@@ -217,6 +217,19 @@ button.headroom-warning {
     border-color: var(--danger-color);
 }
 
+/* Clip-Safe resting state. The button is ALWAYS visible; when there is
+   nothing to do it rests light green and insensitive. The explicit
+   opacity override is the important part: GTK dims insensitive controls
+   hard, which made the button read as missing rather than as
+   "nothing to do". */
+button.clip-safe-ok,
+button.clip-safe-ok:disabled {
+    opacity: 1.0;
+    color: var(--success-color);
+    background-color: color-mix(in srgb, var(--success-color) 18%, transparent);
+    border-color: color-mix(in srgb, var(--success-color) 55%, transparent);
+}
+
 /* Main-window output control row: Auto-Safe, A/B compare, preamp, live
    peak meter and Set Safe, between the spectrum and the fader strip. */
 .output-control-row {

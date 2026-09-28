@@ -17,7 +17,7 @@ pub const HEADROOM_RISK_LIMIT_DB: f64 = 0.0;
 pub const AUTO_SAFE_TARGET_DBFS: f64 = -1.0;
 
 /// Fixed width of the Set Safe button so label changes never reflow the row.
-const SET_SAFE_BUTTON_WIDTH_PX: i32 = 84;
+const SET_SAFE_BUTTON_WIDTH_PX: i32 = 96;
 /// Width of the compact preamp trim.
 const PREAMP_SCALE_WIDTH_PX: i32 = 72;
 
@@ -369,10 +369,17 @@ impl HeadroomPanel {
         // is already where Auto-Safe (or its floor) puts it, so the button
         // would be a no-op that re-opens the same Risk state.
         let needs_fix = peak_db > 0.5 && !self.auto_safe_enabled();
-        // Visible always; only the label and sensitivity change.
+        // Always visible. At rest it reads "Clip-Safe" in light green and
+        // is insensitive; in alert mode it becomes an actionable
+        // "Set Safe" and the blink timer adds `headroom-warning`.
         self.set_safe_button
-            .set_label(if needs_fix { "Set Safe" } else { "Safe" });
+            .set_label(if needs_fix { "Set Safe" } else { "Clip-Safe" });
         self.set_safe_button.set_sensitive(needs_fix);
+        if needs_fix {
+            self.set_safe_button.remove_css_class("clip-safe-ok");
+        } else {
+            self.set_safe_button.add_css_class("clip-safe-ok");
+        }
     }
 
     /// Recompute the estimated curve peak from the live band state and refresh
