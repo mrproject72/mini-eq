@@ -7,6 +7,9 @@ Compact PipeWire system-wide parametric equalizer for Linux desktops.
 GIL under real-time audio processing. Same feature set, native speed, no
 interpreter.
 
+**Repository:** <https://github.com/mrproject72/mini-eq-RR>
+*(not the upstream Python project, and not published on PyPI)*
+
 ## Features
 
 - System-wide parametric EQ for PipeWire desktop playback
@@ -36,15 +39,27 @@ The original Python implementation uses ~30 modules and the Python GIL for real-
 ```bash
 # Build from source
 cargo build --release
-./target/release/mini-eq
+./target/release/mini-eq-rr
 
 # Or install via Flatpak (when packaged)
-flatpak install flathub io.github.bhack.mini-eq
+flatpak install flathub io.github.mrproject72.mini_eq_rr
 ```
 
 ## Development
 
 See [AGENTS.md](AGENTS.md) for project structure, architecture, and development workflow.
+
+## Upstream
+
+Original project: [bhack/mini-eq](https://github.com/bhack/mini-eq) by
+[bhack](https://github.com/bhack). mini-eq RR is an independent rewrite
+and is **not** affiliated with or endorsed by the upstream author. The
+biquad coefficients are asserted against upstream reference values in the
+test suite so the audio processing matches.
+
+See `docs/BUGS.md` for the deliberate divergences from upstream
+(Auto-Safe, Smooth band editing, the LED indicator and the widened
+headroom budget are all additions with no upstream equivalent).
 
 ## License
 

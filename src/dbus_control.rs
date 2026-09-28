@@ -1,8 +1,8 @@
 //! D-Bus remote control interface for Mini EQ.
 //!
 //! Mirrors `dbus_control.py` from the original Python project. Registers a
-//! D-Bus service at `io.github.bhack.mini-eq` / `/io/github/bhack/mini_eq/Control`
-//! with the `io.github.bhack.MiniEq.Control` interface.
+//! D-Bus service at `io.github.mrproject72.mini_eq_rr` / `/io/github/mrproject72/mini_eq_rr/Control`
+//! with the `io.github.mrproject72.MiniEqRR.Control` interface.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -15,8 +15,8 @@ use crate::window_presets::list_preset_names;
 // ── Constants ────────────────────────────────────────────────────────
 
 pub const BUS_NAME: &str = APP_ID;
-pub const OBJECT_PATH: &str = "/io/github/bhack/mini_eq/Control";
-pub const INTERFACE_NAME: &str = "io.github.bhack.MiniEq.Control";
+pub const OBJECT_PATH: &str = "/io/github/mrproject72/mini_eq_rr/Control";
+pub const INTERFACE_NAME: &str = "io.github.mrproject72.MiniEqRR.Control";
 pub const PANEL_ANALYZER_BINS: usize = 10;
 pub const API_VERSION: u32 = 1;
 
@@ -36,7 +36,7 @@ pub const CAPABILITIES: &[&str] = &[
 // ── D-Bus introspection XML ─────────────────────────────────────────
 
 pub const INTROSPECTION_XML: &str = r#"<node>
-  <interface name="io.github.bhack.MiniEq.Control">
+  <interface name="io.github.mrproject72.MiniEqRR.Control">
     <method name="GetState">
       <arg name="state" type="a{sv}" direction="out"/>
     </method>

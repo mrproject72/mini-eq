@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# dev-restart.sh — rebuild and restart mini-eq, detached from the terminal.
+# dev-restart.sh — rebuild and restart mini-eq-rr, detached from the terminal.
 #
 # Usage:
 #   ./dev-restart.sh            # debug build
@@ -28,16 +28,16 @@ LOG=/tmp/eq_live.log
 
 # -x is important: an unanchored pkill can match this very script's command
 # line and kill the caller's shell.
-if pgrep -x mini-eq >/dev/null; then
-  echo "stopping: $(pgrep -x mini-eq | tr '\n' ' ')"
-  pkill -x mini-eq
+if pgrep -x mini-eq-rr >/dev/null; then
+  echo "stopping: $(pgrep -x mini-eq-rr | tr '\n' ' ')"
+  pkill -x mini-eq-rr
   sleep 2
 fi
 
 if [[ "$DO_BUILD" == 1 ]]; then
   # Only the build needs pkg-config to find the vendored GTK/PipeWire deps.
   # Running does not: build.rs bakes deps/ into the binary's rpath.
-  export PKG_CONFIG_PATH="$HOME/code/mini-eq/deps/usr/lib/x86_64-linux-gnu/pkgconfig:${PKG_CONFIG_PATH:-}"
+  export PKG_CONFIG_PATH="$HOME/code/mini-eq-rr/deps/usr/lib/x86_64-linux-gnu/pkgconfig:${PKG_CONFIG_PATH:-}"
   echo "building ($PROFILE)..."
   # `cargo build` is debug by default; only --release exists as a profile flag.
   if [[ "$PROFILE" == "release" ]]; then
@@ -51,7 +51,7 @@ if [[ "$DO_BUILD" == 1 ]]; then
   fi
 fi
 
-BIN="./target/$PROFILE/mini-eq"
+BIN="./target/$PROFILE/mini-eq-rr"
 if [[ ! -x "$BIN" ]]; then
   echo "no binary at $BIN — run without --no-build" >&2
   exit 1
@@ -61,7 +61,7 @@ fi
 setsid "$BIN" >"$LOG" 2>&1 </dev/null &
 sleep 5
 
-PID="$(pgrep -x mini-eq || true)"
+PID="$(pgrep -x mini-eq-rr || true)"
 if [[ -z "$PID" ]]; then
   echo "did not stay up — last lines of $LOG:" >&2
   tail -20 "$LOG" >&2

@@ -72,7 +72,7 @@ pub const MODE_INDEX_BY_VALUE: &[usize] = &[0];
 
 // ── File paths ───────────────────────────────────────────────────────────────
 
-pub const APP_ID: &str = "io.github.bhack.mini-eq";
+pub const APP_ID: &str = "io.github.mrproject72.mini_eq_rr";
 
 /// XDG config home or `~/.config`.
 pub fn user_config_dir() -> PathBuf {
@@ -87,7 +87,7 @@ pub fn user_config_dir() -> PathBuf {
     home.join(".config")
 }
 
-/// `~/.config/mini-eq`
+/// `~/.config/mini-eq-rr-rr`
 pub fn app_config_dir() -> PathBuf {
     user_config_dir().join("mini-eq")
 }

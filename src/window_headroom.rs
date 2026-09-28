@@ -18,8 +18,8 @@ pub const AUTO_SAFE_TARGET_DBFS: f64 = -1.0;
 
 /// Fixed width of the Set Safe button so label changes never reflow the row.
 const SET_SAFE_BUTTON_WIDTH_PX: i32 = 96;
-/// Width of the compact preamp trim.
-const PREAMP_SCALE_WIDTH_PX: i32 = 72;
+/// Width of the smooth spread slide bar inside the popover.
+const SMOOTH_WIDTH_SCALE_W_PX: i32 = 150;
 
 /// Compute the preamp that keeps the EQ curve's peak at or below
 /// `target_dbfs`, never boosting above 0 dB. `raw_peak_db` is the curve peak
@@ -76,7 +76,9 @@ pub struct HeadroomPanel {
     /// Compact preamp trim. A SpinButton cost ~110px because of its
     /// +/- buttons; a value-less Scale does the same job in ~96px, with the
     /// number kept available in the tooltip.
-    pub preamp_scale: gtk4::Scale,
+    /// Preamp uses the +/- spin: precise entry matters more here
+    /// than it does for the smooth spread.
+    pub preamp_spin: gtk4::SpinButton,
     pub peak_label: gtk4::Label,
     pub state_label: gtk4::Label,
     /// Small status LED replacing the old bar meter: colour carries
@@ -99,7 +101,8 @@ pub struct HeadroomPanel {
     /// Smooth spread control (Gaussian sigma, in bands) and the live value
     /// read by the Smooth override. Min = 0.45 moves ONLY the dragged band.
     /// Width control lives inside the Smooth popover as a +/- spin.
-    pub smooth_width_spin: gtk4::SpinButton,
+    /// Width inside the Smooth popover uses a slide bar.
+    pub smooth_width_scale: gtk4::Scale,
     /// Single menu button owning the Smooth switch and its width spin, so
     /// the output row spends ONE cell on Smooth instead of two.
     pub smooth_menu: gtk4::MenuButton,
@@ -118,20 +121,12 @@ impl HeadroomPanel {
             1.0,
             0.0,
         );
-        let preamp_scale = gtk4::Scale::new(gtk4::Orientation::Horizontal, Some(&preamp_adj));
-        preamp_scale.set_digits(1);
-        // No inline value: that is what was costing ~40px of row width. The
-        // tooltip carries the number instead and is kept live below.
-        preamp_scale.set_draw_value(false);
-        preamp_scale.set_size_request(PREAMP_SCALE_WIDTH_PX, -1);
-        preamp_scale.set_valign(gtk4::Align::Center);
-        preamp_scale.set_tooltip_text(Some("Preamp gain: 0.0 dB"));
-        {
-            let tip = preamp_scale.clone();
-            preamp_scale.connect_value_changed(move |s| {
-                tip.set_tooltip_text(Some(&format!("Preamp gain: {:+.1} dB", s.value())));
-            });
-        }
+        let preamp_spin = gtk4::SpinButton::new(Some(&preamp_adj), 0.5, 1);
+        preamp_spin.set_digits(1);
+        preamp_spin.set_width_chars(5);
+        preamp_spin.set_max_width_chars(5);
+        preamp_spin.set_valign(gtk4::Align::Center);
+        preamp_spin.set_tooltip_text(Some("Preamp gain (dB)"));
 
         // No "Peak: " prefix -- the LED beside it already says what this is,
         // and the prefix was costing ~40px of row width.
@@ -160,6 +155,11 @@ impl HeadroomPanel {
         // is fixed to the widest label so swapping the text cannot move the
         // neighbours either.
         let set_safe_button = gtk4::Button::with_label("Safe");
+        // GTK4 widgets do NOT inherit visibility from their parent, and a
+        // freshly built Button starts with visible == false. Nothing else in
+        // this codebase ever showed it, which is why the button was absent
+        // even though the label, CSS class and layout cell were all correct.
+        set_safe_button.set_visible(true);
         set_safe_button.set_sensitive(false);
         set_safe_button.set_size_request(SET_SAFE_BUTTON_WIDTH_PX, -1);
         set_safe_button.set_halign(gtk4::Align::Start);
@@ -172,12 +172,12 @@ impl HeadroomPanel {
         let auto_safe = Rc::new(std::cell::Cell::new(false));
         {
             let auto_safe = auto_safe.clone();
-            let preamp_spin = preamp_scale.clone();
+            let preamp_ctl = preamp_spin.clone();
             auto_safe_switch.connect_state_set(move |_sw, on| {
                 auto_safe.set(on);
                 // The auto algorithm owns the preamp while enabled, so the
                 // manual control is disabled to avoid fighting it.
-                preamp_spin.set_sensitive(!on);
+                preamp_ctl.set_visible(!on);
                 glib::Propagation::Proceed
             });
         }
@@ -201,12 +201,14 @@ impl HeadroomPanel {
         // which breaks the curve into separate bumps with troughs between.
         let (w_min, w_max, w_default) = crate::core::smooth_spread_bounds_bands();
         let smooth_width_adj = gtk4::Adjustment::new(w_default, w_min, w_max, 0.05, 0.1, 0.0);
-        let smooth_width_spin = gtk4::SpinButton::new(Some(&smooth_width_adj), 0.05, 2);
-        smooth_width_spin.set_digits(2);
-        smooth_width_spin.set_width_chars(5);
-        smooth_width_spin.set_max_width_chars(5);
-        smooth_width_spin.set_valign(gtk4::Align::Center);
-        smooth_width_spin.set_tooltip_text(Some(
+        let smooth_width_scale =
+            gtk4::Scale::new(gtk4::Orientation::Horizontal, Some(&smooth_width_adj));
+        smooth_width_scale.set_digits(2);
+        smooth_width_scale.set_draw_value(true);
+        smooth_width_scale.set_value_pos(gtk4::PositionType::Right);
+        smooth_width_scale.set_size_request(SMOOTH_WIDTH_SCALE_W_PX, -1);
+        smooth_width_scale.set_valign(gtk4::Align::Center);
+        smooth_width_scale.set_tooltip_text(Some(
             "How many bands move when you drag one.\n\
              Minimum = only the dragged band (1 band).\n\
              Higher  = more of the spectrum moves together.\n\
@@ -215,12 +217,12 @@ impl HeadroomPanel {
         let smooth_spread_bands = Rc::new(std::cell::Cell::new(w_default));
         {
             let smooth_spread_bands = smooth_spread_bands.clone();
-            smooth_width_spin.connect_value_changed(move |s| {
+            smooth_width_scale.connect_value_changed(move |s| {
                 smooth_spread_bands.set(s.value());
             });
         }
         // The width only matters while Smooth is active.
-        smooth_width_spin.set_sensitive(false);
+        smooth_width_scale.set_sensitive(false);
 
         // --- Smooth popover -------------------------------------------
         // The switch and its width control live inside one menu button.
@@ -249,7 +251,7 @@ impl HeadroomPanel {
             w_label.set_halign(gtk4::Align::Start);
             w_label.set_hexpand(true);
             w_row.append(&w_label);
-            w_row.append(&smooth_width_spin);
+            w_row.append(&smooth_width_scale);
             pop.append(&w_row);
 
             let popover = gtk4::Popover::new();
@@ -289,7 +291,7 @@ impl HeadroomPanel {
 
         Self {
             container,
-            preamp_scale,
+            preamp_spin,
             peak_label,
             state_label,
             led_area,
@@ -300,7 +302,7 @@ impl HeadroomPanel {
             auto_safe,
             smooth_switch,
             smooth,
-            smooth_width_spin,
+            smooth_width_scale,
             smooth_menu,
             smooth_spread_bands,
             state,
@@ -374,6 +376,7 @@ impl HeadroomPanel {
         // "Set Safe" and the blink timer adds `headroom-warning`.
         self.set_safe_button
             .set_label(if needs_fix { "Set Safe" } else { "Clip-Safe" });
+        self.set_safe_button.set_visible(true);
         self.set_safe_button.set_sensitive(needs_fix);
         if needs_fix {
             self.set_safe_button.remove_css_class("clip-safe-ok");
@@ -435,7 +438,7 @@ impl HeadroomPanel {
     }
 
     pub fn preamp_value(&self) -> f64 {
-        self.preamp_scale.value()
+        self.preamp_spin.value()
     }
 
     /// Whether the Auto-Safe continuous preamp clamp is enabled.
@@ -449,7 +452,7 @@ impl HeadroomPanel {
     }
 
     pub fn set_preamp_value(&self, preamp_db: f64) {
-        self.preamp_scale.set_value(preamp_db);
+        self.preamp_spin.set_value(preamp_db);
     }
 
     pub fn widget(&self) -> &gtk4::Box {

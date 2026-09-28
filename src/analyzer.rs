@@ -697,7 +697,7 @@ pub const ANALYZER_DISPLAY_GAIN_DEFAULT: f64 = 0.0;
 pub const ANALYZER_CAPTURE_QUEUE_BLOCKS: usize = 128;
 pub const ANALYZER_NODE_NAME: &str = "mini-eq-analyzer";
 pub const ANALYZER_NODE_DESCRIPTION: &str = "Mini EQ Monitor";
-pub const ANALYZER_APPLICATION_ID: &str = "io.github.bhack.mini-eq";
+pub const ANALYZER_APPLICATION_ID: &str = "io.github.mrproject72.mini_eq_rr";
 pub const ANALYZER_MEDIA_CLASS: &str = "Stream/Input/Audio/Internal";
 
 pub const ANALYZER_RESPONSE_MIN: f64 = 0.02;

@@ -12,8 +12,8 @@ use crate::core::{APP_ID, app_data_file_path};
 pub const APP_DISPLAY_NAME: &str = "Mini EQ";
 pub const APP_ICON_NAME: &str = APP_ID;
 pub const APP_ICON_SEARCH_PATH: &str = "assets/icons";
-pub const APP_SCHEMA_NAME: &str = "io.github.bhack.mini-eq.gschema.xml";
-pub const APP_SCHEMA_SOURCE: &str = "assets/schemas/io.github.bhack.mini-eq.gschema.xml";
+pub const APP_SCHEMA_NAME: &str = "io.github.mrproject72.mini_eq_rr.gschema.xml";
+pub const APP_SCHEMA_SOURCE: &str = "assets/schemas/io.github.mrproject72.mini_eq_rr.gschema.xml";
 
 /// Escape a single argument for use in a freedesktop `.desktop` Exec line.
 pub fn quote_desktop_exec_arg(value: &str) -> String {
@@ -33,7 +33,7 @@ pub fn build_desktop_file() -> String {
         &format!("Name={}", APP_DISPLAY_NAME),
         "Keywords=equalizer;audio;pipewire;",
         "Categories=GTK;AudioVideo;Audio;",
-        &format!("Exec={}", "mini-eq"),
+        &format!("Exec={}", "mini-eq-rr"),
         &format!("Icon={}", APP_ICON_NAME),
         "StartupNotify=true",
         "Terminal=false",
@@ -226,5 +226,5 @@ pub fn build_native_autostart_desktop_file(command: &[String], _auto_route: bool
 
 #[allow(unused_imports)]
 fn _asset_path() -> std::path::PathBuf {
-    app_data_file_path("mini-eq")
+    app_data_file_path("mini-eq-rr")
 }

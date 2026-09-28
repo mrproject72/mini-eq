@@ -10,7 +10,7 @@
 - UI must use native GTK4/Libadwaita crates, no web/interpreted layer.
 - PipeWire filter-chain must use native biquad filters (SPA plugin), coefficients at DSP clock rate.
 - Virtual sink: `mini_eq_sink` with description `Mini-EQ-Sink`; output client: `Mini EQ Output`.
-- Presets stored under `~/.config/mini-eq/`; AutoEq cache under `~/.cache/mini-eq/autoeq/`.
+- Presets stored under `~/.config/mini-eq-rr-rr-rr/`; AutoEq cache under `~/.cache/mini-eq-rr/autoeq/`.
 - Original project has no relation to TUD.
 - Flatpak is the target distribution model.
 - No scope creep: stick to upstream feature set.
@@ -70,6 +70,6 @@
 - Rust toolchain: 1.98.1
 - GTK4 dev: available via `deps/` directory or system packages
 - PipeWire: required for runtime; filter-chain module must be loaded
-- Original project reference: `/var/lib/flatpak/app/io.github.bhack.mini-eq/`
-- Original config: `~/.config/mini-eq/`
-- AutoEq cache: `~/.cache/mini-eq/autoeq/`
+- Original project reference: `/var/lib/flatpak/app/io.github.mrproject72.mini_eq_rr/`
+- Original config: `~/.config/mini-eq-rr-rr-rr/`
+- AutoEq cache: `~/.cache/mini-eq-rr/autoeq/`

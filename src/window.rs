@@ -417,7 +417,8 @@ impl MiniEqWindow {
         {
             let registry = fader_registry.clone();
             let editor = band_editor.clone();
-            let width_spin = utility.headroom.borrow().smooth_width_spin.clone();
+            let width_ctl = utility.headroom.borrow().smooth_width_scale.clone();
+            let smooth_menu = utility.headroom.borrow().smooth_menu.clone();
             utility
                 .headroom
                 .borrow()
@@ -429,9 +430,24 @@ impl MiniEqWindow {
                     }
                     editor.set_type_and_q_enabled(!on);
                     // The width control only means anything while Smooth is on.
-                    width_spin.set_sensitive(on);
+                    width_ctl.set_sensitive(on);
+                    // Light up the dropdown so the active mode is visible
+                    // without opening it.
+                    if on {
+                        smooth_menu.add_css_class("smooth-on");
+                    } else {
+                        smooth_menu.remove_css_class("smooth-on");
+                    }
                     glib::Propagation::Proceed
                 });
+        }
+        // Reflect a restored Smooth state on the dropdown immediately.
+        if utility.headroom.borrow().smooth.get() {
+            utility
+                .headroom
+                .borrow()
+                .smooth_menu
+                .add_css_class("smooth-on");
         }
         refresh_editor();
         let split_view = Rc::new(RefCell::new(split_view));

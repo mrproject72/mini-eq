@@ -1,14 +1,14 @@
 [package]
-name = "mini-eq"
+name = "mini-eq-rr"
 version = "0.9.0"
 edition = "2024"
 description = "mini-eq RR — Rust rewrite of the mini-eq PipeWire system-wide parametric equalizer."
 license = "GPL-3.0-or-later"
-authors = ["bhack"]
+authors = ["mrproject72"]
 keywords = ["audio", "desktop", "equalizer", "pipewire", "gtk", "linux", "parametric-eq"]
 categories = ["audio", "gui", "multimedia"]
 readme = "README.md"
-repository = "https://github.com/bhack/mini-eq"
+repository = "https://github.com/mrproject72/mini-eq-RR"
 
 [dependencies]
 # PipeWire

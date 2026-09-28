@@ -33,11 +33,11 @@
 
 ## Known Issues
 
-- **App ID still uses upstream's namespace (`io.github.bhack.mini-eq`) —
+- **App ID still uses upstream's namespace (`io.github.mrproject72.mini_eq_rr`) —
   needs a decision before any public release.** `core::APP_ID`,
   `analyzer::ANALYZER_APPLICATION_ID`, the D-Bus service name
-  (`io.github.bhack.MiniEq.Control`) and the autostart file
-  (`io.github.bhack.mini-eq.desktop`) all identify as the **original
+  (`io.github.mrproject72.MiniEqRR.Control`) and the autostart file
+  (`io.github.mrproject72.mini_eq_rr.desktop`) all identify as the **original
   Python project**. Consequences: it collides with a real upstream install
   on the same machine (single-instance lock, D-Bus name ownership, desktop
   file, autostart entry) and it misrepresents authorship. Renaming touches

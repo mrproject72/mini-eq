@@ -68,7 +68,7 @@
 
 ## Flatpak / Packaging (Phase 8)
 
-- [ ] Create Flatpak manifest `io.github.bhack.mini-eq.yaml` matching upstream.
+- [ ] Create Flatpak manifest `io.github.mrproject72.mini_eq_rr.yaml` matching upstream.
 - [ ] Add Flatpak build/test workflow.
 - [ ] Verify appstream metadata, desktop file, icon installation.
 

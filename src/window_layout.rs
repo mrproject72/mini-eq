@@ -90,21 +90,24 @@ pub fn build_band_faders(
 const OUTPUT_ROW_COMPACT_WIDTH: i32 = 1000;
 
 /// Fixed cell widths for the output row (see `fixed_cell`).
-// Sized so the whole row fits MIN_WINDOW_WIDTH (640) WITHOUT wrapping.
-// It previously overflowed by ~16px, which pushed Set Safe onto a second
-// line that the row height could not show -- that is why it looked like the
-// button was missing rather than merely insensitive.
-const CELL_W_SMOOTH: i32 = 100;
-const CELL_W_AUTO_SAFE: i32 = 128;
-const CELL_W_PREAMP: i32 = 130;
-const CELL_W_STATUS: i32 = 112;
-const CELL_W_SET_SAFE: i32 = 100;
+// These are MINIMUM cell widths (set_size_request is a floor, not a cap),
+// sized for the COMPACT case where captions are hidden and only the
+// control itself occupies the cell. They were previously sized for the
+// captioned case, which wasted ~60px per cell and pushed the row onto a
+// second line at the minimum window width. When captions are shown
+// (window >= OUTPUT_ROW_COMPACT_WIDTH) the cells grow to fit, which is
+// fine because there is room at that width.
+const CELL_W_SMOOTH: i32 = 96;
+const CELL_W_AUTO_SAFE: i32 = 72;
+const CELL_W_PREAMP: i32 = 96;
+const CELL_W_STATUS: i32 = 108;
+const CELL_W_SET_SAFE: i32 = 96;
 
 fn build_output_control_row(utility: &UtilityPane) -> adw::WrapBox {
     // WrapBox rather than a plain Box: at narrow widths items wrap onto a
     // second line instead of being clipped, so nothing is ever cut off.
     let row = adw::WrapBox::builder()
-        .child_spacing(12)
+        .child_spacing(8)
         .line_spacing(10)
         .build();
     row.set_orientation(gtk4::Orientation::Horizontal);
@@ -135,7 +138,7 @@ fn build_output_control_row(utility: &UtilityPane) -> adw::WrapBox {
     let preamp_item = fixed_cell(
         CELL_W_PREAMP,
         Some(("Preamp", "Output preamp trim (dB)")),
-        &headroom.preamp_scale,
+        &headroom.preamp_spin,
         &mut labels,
     );
 
@@ -166,14 +169,14 @@ fn build_output_control_row(utility: &UtilityPane) -> adw::WrapBox {
     // The preamp control is hidden while Auto-Safe owns it. The CELL stays
     // its fixed width, so nothing shifts.
     {
-        let preamp = headroom.preamp_scale.clone();
+        let preamp = headroom.preamp_spin.clone();
         headroom.auto_safe_switch.connect_state_set(move |_sw, on| {
             preamp.set_visible(!on);
             glib::Propagation::Proceed
         });
     }
     preamp_item.set_visible(true);
-    headroom.preamp_scale.set_visible(!headroom.auto_safe.get());
+    headroom.preamp_spin.set_visible(!headroom.auto_safe.get());
 
     // Drop the captions when the row gets tight. Every control carries its
     // own tooltip, so the names are still reachable.

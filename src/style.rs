@@ -230,6 +230,14 @@ button.clip-safe-ok:disabled {
     border-color: color-mix(in srgb, var(--success-color) 55%, transparent);
 }
 
+/* Smooth engaged: the menu button lights up the same green so the active
+   mode is obvious without opening the popover. */
+button.smooth-on {
+    color: var(--success-color);
+    background-color: color-mix(in srgb, var(--success-color) 22%, transparent);
+    border-color: var(--success-color);
+}
+
 /* Main-window output control row: Auto-Safe, A/B compare, preamp, live
    peak meter and Set Safe, between the spectrum and the fader strip. */
 .output-control-row {

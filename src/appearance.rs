@@ -70,7 +70,7 @@ impl AppearanceSettings {
     pub fn load() -> Self {
         if let Ok(data) = std::fs::read_to_string(
             std::path::Path::new(&std::env::var("HOME").unwrap_or_default())
-                .join(".config/mini-eq/appearance.json"),
+                .join(".config/mini-eq-rr-rr/appearance.json"),
         ) {
             serde_json::from_str(&data).unwrap_or_default()
         } else {
@@ -80,7 +80,7 @@ impl AppearanceSettings {
 
     pub fn save(&self) {
         let path = std::path::Path::new(&std::env::var("HOME").unwrap_or_default())
-            .join(".config/mini-eq");
+            .join(".config/mini-eq-rr");
         let _ = std::fs::create_dir_all(&path);
         let data = serde_json::to_string_pretty(self).unwrap_or_default();
         let _ = std::fs::write(path.join("appearance.json"), data);

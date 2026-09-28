@@ -22,7 +22,7 @@ pub const BACKGROUND_PORTAL_IFACE: &str = "org.freedesktop.portal.Background";
 pub const PORTAL_REQUEST_IFACE: &str = "org.freedesktop.portal.Request";
 pub const PORTAL_CALL_TIMEOUT_MS: u32 = 120_000;
 pub const PORTAL_RESPONSE_SUCCESS: u32 = 0;
-pub const AUTOSTART_FILE_NAME: &str = "io.github.bhack.mini-eq.desktop";
+pub const AUTOSTART_FILE_NAME: &str = "io.github.mrproject72.mini_eq_rr.desktop";
 
 // ── Executable resolution ────────────────────────────────────────────────────
 

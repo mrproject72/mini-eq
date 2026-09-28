@@ -9,10 +9,10 @@ use adw::prelude::*;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-use mini_eq::background;
-use mini_eq::core::default_bands;
-use mini_eq::dbus_control::{MiniEqAppHandler, MiniEqDBusControl};
-use mini_eq::pipewire_backend::PipeWireBackend;
+use mini_eq_rr::background;
+use mini_eq_rr::core::default_bands;
+use mini_eq_rr::dbus_control::{MiniEqAppHandler, MiniEqDBusControl};
+use mini_eq_rr::pipewire_backend::PipeWireBackend;
 
 #[derive(Parser)]
 #[command(name = "mini-eq")]
@@ -144,7 +144,7 @@ fn main() {
     if let Some(command) = &cli.command {
         match command {
             Commands::InstallDesktop => {
-                match mini_eq::desktop_integration::install_desktop_integration() {
+                match mini_eq_rr::desktop_integration::install_desktop_integration() {
                     Ok(()) => println!("Installed desktop launcher and app icons."),
                     Err(e) => {
                         eprintln!("Failed to install desktop integration: {}", e);
@@ -209,7 +209,7 @@ fn print_dependency_report() {
 fn run_headless(duration: Option<u64>, import_apo: Option<&std::path::Path>) {
     println!("Running headless (no GUI)");
     let bands = match import_apo {
-        Some(path) => match mini_eq::autoeq::parse_apo_file(path) {
+        Some(path) => match mini_eq_rr::autoeq::parse_apo_file(path) {
             Ok((preamp, bands)) => {
                 println!(
                     "Imported APO preset: {} band(s), preamp {:.1} dB",
@@ -250,7 +250,7 @@ fn run_headless(duration: Option<u64>, import_apo: Option<&std::path::Path>) {
 fn launch_gui(_background_mode: bool, auto_route: bool, output_sink: Option<String>) {
     let _ = adw::init();
     let app = adw::Application::new(
-        Some("io.github.bhack.mini-eq"),
+        Some("io.github.mrproject72.mini_eq_rr"),
         adw::gio::ApplicationFlags::empty(),
     );
 
@@ -274,7 +274,7 @@ fn launch_gui(_background_mode: bool, auto_route: bool, output_sink: Option<Stri
                         }
                         if auto_route {
                             if let Err(e) =
-                                backend.auto_route_to_sink(mini_eq::core::VIRTUAL_SINK_BASE)
+                                backend.auto_route_to_sink(mini_eq_rr::core::VIRTUAL_SINK_BASE)
                             {
                                 log::warn!("Failed to auto-route: {}", e);
                             }
@@ -297,7 +297,7 @@ fn launch_gui(_background_mode: bool, auto_route: bool, output_sink: Option<Stri
     let backend_for_activate = shared_backend.clone();
     let sink_for_activate = engine_sink.clone();
     app.connect_activate(move |app| {
-        let window = mini_eq::window::MiniEqWindow::new(
+        let window = mini_eq_rr::window::MiniEqWindow::new(
             app,
             backend_for_activate.clone(),
             sink_for_activate.clone(),
