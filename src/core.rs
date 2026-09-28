@@ -87,7 +87,7 @@ pub fn user_config_dir() -> PathBuf {
     home.join(".config")
 }
 
-/// `~/.config/mini-eq-rr-rr`
+/// `~/.config/mini-eq-rr`
 pub fn app_config_dir() -> PathBuf {
     user_config_dir().join("mini-eq")
 }

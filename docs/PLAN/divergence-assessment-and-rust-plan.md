@@ -93,7 +93,7 @@ This document maps verified gaps between the original Python mini-eq (`bhack/min
 
 **Upstream** (`window_presets.py:1-1457`): Full preset lifecycle — load/save/save-as/revert/reset-to-neutral/import/export/delete, output-preset auto-linking by route key, fallback presets, file monitoring (Gio.FileMonitor), preset name existence checks, replace dialog.
 
-**Rust** (`window_presets.rs:6-157`): Preset management widget with ListBox, add/delete/save buttons. Preset names listed from `.config/mini-eq-rr-rr/presets/`. Save writes `{}` JSON (no band data yet). No revert/reset/import/export/delete beyond basic ListBox operations. No output-preset linking.
+**Rust** (`window_presets.rs:6-157`): Preset management widget with ListBox, add/delete/save buttons. Preset names listed from `.config/mini-eq-rr/presets/`. Save writes `{}` JSON (no band data yet). No revert/reset/import/export/delete beyond basic ListBox operations. No output-preset linking.
 
 **Acceptance criterion**: Rust must implement full preset lifecycle with payload serialization (band data + preamp), file monitoring, fallback presets, and output-preset route linking.
 

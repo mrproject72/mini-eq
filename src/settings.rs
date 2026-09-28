@@ -1,7 +1,7 @@
 //! User settings persistence (mirrors `settings.py`).
 //!
 //! Settings are stored as JSON in `$XDG_CONFIG_HOME/mini-eq/settings.json`
-//! (or `~/.config/mini-eq-rr-rr-rr/settings.json`).
+//! (or `~/.config/mini-eq-rr/settings.json`).
 
 use std::fs;
 use std::path::PathBuf;

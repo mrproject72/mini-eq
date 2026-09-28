@@ -70,7 +70,7 @@ impl AppearanceSettings {
     pub fn load() -> Self {
         if let Ok(data) = std::fs::read_to_string(
             std::path::Path::new(&std::env::var("HOME").unwrap_or_default())
-                .join(".config/mini-eq-rr-rr/appearance.json"),
+                .join(".config/mini-eq-rr/appearance.json"),
         ) {
             serde_json::from_str(&data).unwrap_or_default()
         } else {
