@@ -147,10 +147,30 @@ impl MiniEqWindow {
         menu_button.set_menu_model(Some(&menu_model));
         header_bar.pack_end(&menu_button);
 
-        // System-wide EQ toggle (no "System EQ" label to save header width).
+        // System-wide EQ toggle with an explicit ON/OFF readout. The bare
+        // switch left the routing state ambiguous at a glance, and the
+        // tooltip is only reachable with the pointer.
         let route_switch = gtk4::Switch::new();
         route_switch.set_tooltip_text(Some("System-wide EQ"));
-        header_bar.pack_end(&route_switch);
+        let route_state_label = gtk4::Label::new(Some("Off"));
+        route_state_label.set_css_classes(&["metric-title"]);
+        route_state_label.set_valign(gtk4::Align::Center);
+        route_state_label.set_width_chars(3);
+        route_state_label.set_xalign(1.0);
+        {
+            let lbl = route_state_label.clone();
+            // notify::active rather than state-set so programmatic changes
+            // (restore-on-startup, menu actions) update the readout too.
+            route_switch.connect_notify_local(Some("active"), move |sw, _| {
+                let on = sw.is_active();
+                lbl.set_label(if on { "On" } else { "Off" });
+            });
+        }
+        let route_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+        route_box.set_valign(gtk4::Align::Center);
+        route_box.append(&route_state_label);
+        route_box.append(&route_switch);
+        header_bar.pack_end(&route_box);
 
         // Panel switch buttons: each swaps the sidebar to a different panel
         // (Preset / Signal Analyzer / Headroom) and opens it. Mutually

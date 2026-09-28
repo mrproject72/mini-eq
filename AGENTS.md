@@ -8,7 +8,6 @@
 3. **`docs/PLAN/`** — implementation plans and architecture decisions
 4. **`docs/{date}-updates.md`** — latest implementation changes
 5. **`docs/{date}-handover.md`** — dev session handover for context
-6. **`/home/mrproject/code/mini-eq/docs/BUGS.md`** — current open and fixed bugs
 
 Important considerations:
 
@@ -122,7 +121,12 @@ src/
 ```
 
 ### PipeWire filter-chain architecture
-- Creates virtual sink: `mini_eq_sink` → `alsa_output.pci-0000_04_00.6.analog-stereo`
+- Creates virtual sink: `mini_eq_sink` → the system default output node
+  (`<default-output-node>`). **The target node is discovered at runtime**
+  via `routing.rs::find_node_target` / `target_sink: Option<String>` and
+  the PipeWire `default` metadata — it is never hardcoded to a specific
+  sound card. Any `alsa_output.pci-*` name seen in logs or traces comes
+  from the host, not from this codebase.
 - Uses `libpipewire-module-filter-chain` for DSP
 - Biquad filters calculate coefficients at DSP clock rate
 - EQ processing not pinned to 48 kHz

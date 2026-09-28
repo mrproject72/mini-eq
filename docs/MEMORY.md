@@ -3,7 +3,7 @@
 ## Project Identity
 - **Goal**: Rust rewrite of `bhack/mini-eq` (Python/GTK/PipeWire parametric EQ). Same UI look-and-feel, lower CPU, no GIL.
 - **Original upstream**: `https://github.com/bhack/mini-eq` (fetched as `upstream/main`, tags v0.1.0–v0.8.8).
-- **Rust repo**: `/home/mrproject/code/mini-eq` (origin: `git@github.com:mrproject72/mini-eq.git`).
+- **Rust repo**: `{project_dir}` (origin: `git@github.com:mrproject72/mini-eq.git`).
 - **Tech stack**: Rust 1.98.1, GTK4 0.11.4, libadwaita 0.9.2, pipewire 0.10.1, rustfft 6.4.1, ebur128 0.1.10, clap 4.6.7, tokio 1.53.1.
 
 ## Key Decisions
@@ -20,7 +20,7 @@
 - **Tests**: `cargo test --lib` passes 29 tests.
 - **Source**: ~6,900 lines across 32 modules.
 - **Upstream fetched**: Yes (`upstream/main`).
-- **Working directory for this project**: `/home/mrproject/code/mini-eq` (NOT `/home/mrproject/code/mini-eq_rust`).
+- **Working directory for this project**: `{project_dir}` (NOT `{project_dir}_rust`).
 
 ## Module Status
 | Module | Lines | Status |

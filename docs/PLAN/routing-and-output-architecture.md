@@ -112,10 +112,10 @@ the authoritative current default output. No hardcoded device names, no
 
 **Verified live:**
 ```
-metadata property default.audio.sink = Some("{\"name\":\"alsa_output.pci-0000_04_00.6.analog-stereo\"}")
-  -> Some("alsa_output.pci-0000_04_00.6.analog-stereo")
-Loading filter-chain module -> alsa_output.pci-0000_04_00.6.analog-stereo
-mini_eq_sink_output -> alsa_output.pci-0000_04_00.6.analog-stereo
+metadata property default.audio.sink = Some("{\"name\":\"<default-output-node>\"}")
+  -> Some("<default-output-node>")
+Loading filter-chain module -> <default-output-node>
+mini_eq_sink_output -> <default-output-node>
 ```
 
 ---

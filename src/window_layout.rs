@@ -90,10 +90,14 @@ pub fn build_band_faders(
 const OUTPUT_ROW_COMPACT_WIDTH: i32 = 1000;
 
 /// Fixed cell widths for the output row (see `fixed_cell`).
+// Sized so the whole row fits MIN_WINDOW_WIDTH (640) WITHOUT wrapping.
+// It previously overflowed by ~16px, which pushed Set Safe onto a second
+// line that the row height could not show -- that is why it looked like the
+// button was missing rather than merely insensitive.
+const CELL_W_SMOOTH: i32 = 100;
 const CELL_W_AUTO_SAFE: i32 = 128;
-const CELL_W_SMOOTH: i32 = 104;
-const CELL_W_PREAMP: i32 = 148;
-const CELL_W_STATUS: i32 = 136;
+const CELL_W_PREAMP: i32 = 130;
+const CELL_W_STATUS: i32 = 112;
 const CELL_W_SET_SAFE: i32 = 92;
 
 fn build_output_control_row(utility: &UtilityPane) -> adw::WrapBox {
@@ -135,8 +139,10 @@ fn build_output_control_row(utility: &UtilityPane) -> adw::WrapBox {
         &mut labels,
     );
 
-    row.append(&auto_safe_item);
+    // Smooth first, then Auto-Safe: the dropdown is the control that
+    // changes how dragging behaves, so it leads the row.
     row.append(&smooth_item);
+    row.append(&auto_safe_item);
     row.append(&preamp_item);
 
     // Status cell: LED + numeric peak, grouped so they never separate on wrap.
