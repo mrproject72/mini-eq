@@ -103,14 +103,23 @@ const CELL_W_PREAMP: i32 = 96;
 const CELL_W_STATUS: i32 = 108;
 const CELL_W_SET_SAFE: i32 = 96;
 
-fn build_output_control_row(utility: &UtilityPane) -> adw::WrapBox {
-    // WrapBox rather than a plain Box: at narrow widths items wrap onto a
-    // second line instead of being clipped, so nothing is ever cut off.
-    let row = adw::WrapBox::builder()
-        .child_spacing(8)
-        .line_spacing(10)
-        .build();
-    row.set_orientation(gtk4::Orientation::Horizontal);
+fn build_output_control_row(utility: &UtilityPane) -> gtk4::FlowBox {
+    // FlowBox rather than adw::WrapBox. WrapBox needs libadwaita >= 1.7,
+    // but Ubuntu 24.04 LTS -- a perfectly reasonable target for a desktop
+    // EQ, supported until 2029 -- ships 1.5.0. Requiring 1.7 would make
+    // the app unbuildable there, so the wrapping is done with GTK4's own
+    // container instead and the v1_7 feature is dropped.
+    //
+    // A plain gtk4::Box is NOT an option: the row is ~630px against a
+    // 640px minimum window, so it genuinely needs to wrap rather than
+    // clip.
+    let row = gtk4::FlowBox::new();
+    row.set_selection_mode(gtk4::SelectionMode::None);
+    row.set_homogeneous(false);
+    row.set_min_children_per_line(1);
+    row.set_max_children_per_line(32);
+    row.set_column_spacing(8);
+    row.set_row_spacing(10);
     row.set_css_classes(&["output-control-row"]);
     row.set_halign(gtk4::Align::Center);
     row.set_hexpand(true);
@@ -144,9 +153,9 @@ fn build_output_control_row(utility: &UtilityPane) -> adw::WrapBox {
 
     // Smooth first, then Auto-Safe: the dropdown is the control that
     // changes how dragging behaves, so it leads the row.
-    row.append(&smooth_item);
-    row.append(&auto_safe_item);
-    row.append(&preamp_item);
+    row.insert(&smooth_item, -1);
+    row.insert(&auto_safe_item, -1);
+    row.insert(&preamp_item, -1);
 
     // Status cell: LED + numeric peak, grouped so they never separate on wrap.
     let status_cell = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
@@ -156,7 +165,7 @@ fn build_output_control_row(utility: &UtilityPane) -> adw::WrapBox {
     status_cell.append(&headroom.led_area);
     headroom.peak_label.set_valign(gtk4::Align::Center);
     status_cell.append(&headroom.peak_label);
-    row.append(&status_cell);
+    row.insert(&status_cell, -1);
 
     headroom.set_safe_button.set_valign(gtk4::Align::Center);
     let set_safe_cell = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
@@ -164,7 +173,7 @@ fn build_output_control_row(utility: &UtilityPane) -> adw::WrapBox {
     set_safe_cell.set_halign(gtk4::Align::Start);
     set_safe_cell.set_valign(gtk4::Align::Center);
     set_safe_cell.append(&headroom.set_safe_button);
-    row.append(&set_safe_cell);
+    row.insert(&set_safe_cell, -1);
 
     // The preamp stays exactly where it is while Auto-Safe owns it and is
     // merely insensitive. Hiding it removed its content from the cell, and
